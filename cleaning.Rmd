@@ -122,7 +122,17 @@ summary(hpc_clean)
 Pairs plot:
 
 ```{r}
-pairs(hpc_dummies)
+#pairs(hpc_dummies)
+
+# Try pairs plot with log of total costs
+data_pairs <- hpc_dummies |> 
+  select(-c(rural, costs_bin, control_bin_Governmental,
+            control_bin_Voluntary, provider_bin_Specialized,
+            set)
+         ) |> 
+  mutate(total_costs = log(total_costs))
+
+pairs(data_pairs)
 ```
 
 - very high pairwise positive collinearity between:
@@ -170,13 +180,21 @@ df_test <- hpc_dummies |> filter(set == "Test") |> select(-set)
 ## Marginal simple linear regressions
 
 ```{r}
-map(select(df_train, -c(total_cost, costs_bin)), ~summary(lm(total_cost ~ .x, data = df_train)))
+predictors <- select(df_train, -c(total_costs, costs_bin))
+
+# model summaries
+map(predictors, ~summary(lm(total_costs ~ .x, data = df_train)))
+
+simple_models <- map(predictors, ~lm(total_costs ~ .x, data = df_train))
 ```
 
 10-fold cv
 
 ```{r}
 # Estimate with k-fold:
+
+n_train <- nrow(df_train)
+
 k <- 10
 k.o <- k
 kvals <- unique(round(n_train/(1L:floor(n_train/2))))
@@ -186,26 +204,44 @@ f <- ceiling(n_train/k)
 
 df_train$fold <- sample(rep(1L:k, f), n_train)
 
-compute_MSEP_lm <- function(train_data, predictor, i){
+predictor_names <- colnames(predictors)
+
+formulas <- str_c("total_costs", " ~ ", predictor_names)
+
+
+
+train_data = df_train
+
+formula = formulas[1]
+
+i = 1
+
+compute_MSEP_lm <- function(train_data, formula, i){
   current_train_folds <- filter(train_data, fold != i)
   current_test_fold <- filter(train_data, fold == i)
     
-  mod <- lm(total_cost ~ predictor, data = current_train_folds)
-  pred <- predict(mod, newdata = select( current_test_fold, -c(total_cost, costs_bin) ) )
+  mod <- lm(formula, data = current_train_folds)
+  pred <- predict(mod, newdata = select( current_test_fold, -c(total_costs, costs_bin) ) )
     
-  MSEP <- mean( (current_test_fold$y - pred$y) ^ 2 )
+  MSEP <- mean( (current_test_fold$total_costs - pred) ^ 2 )
   return(MSEP)
 }
 
-kfold_cv_lm <- function(train_data, predictor, k = 10){
+#compute_MSEP_lm(train_data, formula, i)
+
+kfold_cv_lm <- function(train_data, formula, k = 10){
   
-  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_lm(df_train, predictor, .x))
+  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_lm(train_data, formula, .x))
   avg_MSEP <- mean(MSEP_vec)
   return(avg_MSEP)
   
 }
 
-test_error_vec <- map_dbl( select(df_train, -c(total_cost, costs_bin)), ~kfold_cv_lm(df_train, predictor = .x, k = 10) )
+kfold_cv_lm(train_data, formula)
+
+test_error_vec <- map_dbl( formulas, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+test_error_vec
 ```
 
 
