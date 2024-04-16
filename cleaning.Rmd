@@ -12,7 +12,7 @@ library(tidyverse)
 
 ```{r}
 hpc <- read_csv(here::here("hpc.csv"))
-summary(hpc)
+#summary(hpc)
 ```
 
 ```{r}
@@ -31,7 +31,10 @@ hpc_clean <- hpc |>
            (type_of_control >= 3 & type_of_control < 7) ~ "Proprietary",
            type_of_control >= 7 ~ "Governmental"
          ),
-         provider_bin = ifelse(provider_type < 3, "General", "Specialized"),
+         provider_bin = ifelse(provider_type < 3 |
+                                 provider_type == 6,
+                               "General", "Specialized"
+                               ),
          costs_bin  = ifelse(total_costs > median(total_costs), 1, 0)
          ) |> 
   select(- c(rural_versus_urban, type_of_control, provider_type))
@@ -140,9 +143,9 @@ pairs(hpc_dummies)
 # Train-test Split
 
 ```{r}
-set.seed(333)
+set.seed(1)
 
-train_prop <- 0.8
+train_prop <- 0.9
 
 n <- nrow(hpc_dummies)
 n_train <- train_prop*n
