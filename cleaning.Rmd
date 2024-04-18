@@ -58,7 +58,7 @@ hpc2 <- hpc_clean |>
   group_by(provider_ccn) |> 
   summarise(
     days = sum(days),
-    number_of_beds = sum(number_of_beds),
+    number_of_beds = mean(number_of_beds),
     total_costs = sum(total_costs),
     fte_employees_on_payroll = mean(fte_employees_on_payroll),
     total_days = sum(total_days),
@@ -74,7 +74,13 @@ hpc2 <- hpc_clean |>
 hpc_all <- bind_rows(hpc1, hpc2)
 
 hpc_normalize <- hpc_all |> 
-  mutate()
+  mutate(
+    total_costs = total_costs/days,
+    inpatients = total_days/days,
+    total_discharges = total_discharges/days,
+    total_income = total_income/days,
+    salaries = salaries/days
+    )
 ```
 
 ```{r}
