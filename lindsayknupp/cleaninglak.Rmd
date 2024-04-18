@@ -14,24 +14,29 @@ library(tidyverse)
 hpc <- read_csv(here::here("hpc.csv"))
 #summary(hpc)
 
+hpc %>%
+  distinct(`Provider CCN`)
+
 df1 = hpc %>%
-  select(`Fiscal Year Begin Date`,`Fiscal Year End Date`,`Number of Beds`,`Total Bed Days Available`) %>%
   mutate(start = as.Date(`Fiscal Year Begin Date`),end = as.Date(`Fiscal Year End Date`)) %>%
   mutate(days = as.numeric(end - start)) %>%
   mutate(numBeds = `Total Bed Days Available`/days,id = row_number())
 
+ggplot(df1) + 
+  geom_point(aes(x=days,y=`Total Assets`))
+
+ggplot(df1) +
+  geom_histogram(aes(x=days))
+
 
 ggplot(df1) + 
   geom_segment(aes(x = start, xend = end, y = id),linewidth = 0.2,linetype = 2)
-
-
-
 ```
 
 ```{r}
 hpc_clean <- hpc |> 
   janitor::clean_names() |> 
-  select(total_costs, rural_versus_urban, provider_type, type_of_control,
+  select(provider_ccn,total_costs, rural_versus_urban, provider_type, type_of_control,
          fte_employees_on_payroll, total_days = total_days_v_xviii_xix_unknown,
          bed_days = total_bed_days_available, 
          total_discharges = total_discharges_v_xviii_xix_unknown,
@@ -52,6 +57,29 @@ hpc_clean <- hpc |>
          ) |> 
   select(- c(rural_versus_urban, type_of_control, provider_type))
 ```
+
+```{r}
+ccnnum = hpc_clean %>%
+  group_by(provider_ccn) %>%
+  mutate(counts = n()) %>%
+  select(provider_ccn, counts) %>%
+  filter(counts > 1) %>%
+  select(provider_ccn) %>%
+  pull()
+  
+
+a = hpc %>%
+  filter(`Provider CCN` %in% ccnnum)
+
+
+b = a %>%
+  mutate(start = as.Date(`Fiscal Year Begin Date`),end = as.Date(`Fiscal Year End Date`)) %>%
+  mutate(days = as.numeric(end - start)) 
+
+```
+
+
+
 
 ```{r}
 hpc_dummies <- hpc_clean |> 
