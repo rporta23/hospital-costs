@@ -84,7 +84,11 @@ hpc_normalize <- hpc_all |>
 ```
 
 ```{r}
-hpc_dummies <- hpc_clean |> 
+hpc_dummies <- hpc_normalize |> 
+  select(-c(provider_ccn, days)) |> 
+  mutate(
+    costs_bin = ifelse(total_costs > median(total_costs), 1, 0)
+    ) |> 
   tidytable::get_dummies(drop_first = TRUE) |> 
   select(where(is.numeric))
 ```
@@ -146,10 +150,10 @@ Codes for Provider Type:
 # Exploratory Analysis
 
 ```{r}
-ggplot(hpc_clean, aes(x = total_costs)) +
+ggplot(hpc_dummies, aes(x = total_costs)) +
   geom_histogram() +
-  geom_vline(xintercept = median(hpc_clean$total_costs), color = "red") + 
-  geom_vline(xintercept = mean(hpc_clean$total_costs), color = "blue")
+  geom_vline(xintercept = median(hpc_dummies$total_costs), color = "red") + 
+  geom_vline(xintercept = mean(hpc_dummies$total_costs), color = "blue")
 ```
 
 Distribution of response total costs is extremely right-skewed.
