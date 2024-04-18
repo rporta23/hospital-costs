@@ -13,14 +13,19 @@ library(tidyverse)
 ```{r}
 hpc <- read_csv(here::here("hpc.csv"))
 #summary(hpc)
+
+hpcdf <- hpc |> 
+  mutate(start = as.Date(`Fiscal Year Begin Date`),end = as.Date(`Fiscal Year End Date`)) |> 
+  mutate(days = as.numeric(end - start)) |> 
+  mutate(numBeds = `Total Bed Days Available`/days,id = row_number())
 ```
 
 ```{r}
-hpc_clean <- hpc |> 
+hpc_clean <- hpcdf |> 
   janitor::clean_names() |> 
-  select(total_costs, rural_versus_urban, provider_type, type_of_control,
+  select(provider_ccn, days, number_of_beds,
+         total_costs, rural_versus_urban, provider_type, type_of_control,
          fte_employees_on_payroll, total_days = total_days_v_xviii_xix_unknown,
-         bed_days = total_bed_days_available, 
          total_discharges = total_discharges_v_xviii_xix_unknown,
          total_income, total_assets,
          salaries = total_salaries_from_worksheet_a) |> 
@@ -35,9 +40,41 @@ hpc_clean <- hpc |>
                                  provider_type == 6,
                                "General", "Specialized"
                                ),
-         costs_bin  = ifelse(total_costs > median(total_costs), 1, 0)
          ) |> 
   select(- c(rural_versus_urban, type_of_control, provider_type))
+
+duplicates <- hpc_clean |> 
+  group_by(provider_ccn) |> 
+  summarise(count = n()) |> 
+  filter(count > 1)
+
+dup <- map_lgl(hpc_clean$provider_ccn, `%in%`, duplicates$provider_ccn)
+
+hpc1 <- hpc_clean |> 
+  filter(!dup)
+
+hpc2 <- hpc_clean |> 
+  filter(dup) |> 
+  group_by(provider_ccn) |> 
+  summarise(
+    days = sum(days),
+    number_of_beds = sum(number_of_beds),
+    total_costs = sum(total_costs),
+    fte_employees_on_payroll = mean(fte_employees_on_payroll),
+    total_days = sum(total_days),
+    total_discharges = sum(total_discharges),
+    total_income = sum(total_income),
+    total_assets = mean(total_assets),
+    salaries = sum(salaries),
+    rural = max(rural),
+    control_bin = max(control_bin),
+    provider_bin = max(provider_bin)
+  )
+
+hpc_all <- bind_rows(hpc1, hpc2)
+
+hpc_normalize <- hpc_all |> 
+  mutate()
 ```
 
 ```{r}
