@@ -1,0 +1,359 @@
+---
+title: "Data Cleaning"
+author: "Rose Porta"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE,warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+```{r}
+hpc <- read_csv(here::here("hpc.csv"))
+#summary(hpc)
+```
+
+```{r}
+hpc_clean <- hpc |> 
+  janitor::clean_names() |> 
+  select(total_costs, rural_versus_urban, provider_type, type_of_control,
+         fte_employees_on_payroll, total_days = total_days_v_xviii_xix_unknown,
+         bed_days = total_bed_days_available, 
+         total_discharges = total_discharges_v_xviii_xix_unknown,
+         total_income, total_assets,
+         salaries = total_salaries_from_worksheet_a) |> 
+  na.omit() |> 
+  mutate(rural = ifelse(rural_versus_urban == "R", 1, 0),
+         control_bin = case_when(
+           type_of_control < 3 ~ "Voluntary",
+           (type_of_control >= 3 & type_of_control < 7) ~ "Proprietary",
+           type_of_control >= 7 ~ "Governmental"
+         ),
+         provider_bin = ifelse(provider_type < 3 |
+                                 provider_type == 6,
+                               "General", "Specialized"
+                               ),
+         costs_bin  = ifelse(total_costs > median(total_costs), 1, 0)
+         ) |> 
+  select(- c(rural_versus_urban, type_of_control, provider_type))
+```
+
+```{r}
+hpc_dummies <- hpc_clean |> 
+  tidytable::get_dummies(drop_first = TRUE) |> 
+  select(where(is.numeric))
+```
+
+Codes for type of Control:
+
+1 = Voluntary Non‐Profit‐Church
+
+2 = Voluntary Non‐Profit‐Other
+
+3 = Proprietary‐Individual
+
+4 = Proprietary‐Corporation
+
+5 = Proprietary‐Partnership
+
+6 = Proprietary‐Other
+
+7 = Governmental‐Federal
+
+8 = Governmental‐City‐County
+
+9 = Governmental‐County
+
+10 = Governmental‐State
+
+11 = Governmental‐Hospital District
+
+12 = Governmental‐City
+
+13 = Governmental‐Other
+
+Codes for Provider Type:
+
+1 = General Short Term (includes CAHs)
+
+2 = General Long Term
+
+3 = Cancer
+
+4 = Psychiatric
+
+5 = Rehabilitation
+
+6 = Religious Non‐Medical Health Care Institution
+
+7 = Children
+
+8 = Reserved for Future Use
+
+9 = Other
+
+10 = Extended Neoplastic Disease Care
+
+11 = Indian Health Services
+
+12 = Rural Emergency Hospital.
+
+# Exploratory Analysis
+
+```{r}
+ggplot(hpc_clean, aes(x = total_costs)) +
+  geom_histogram() +
+  geom_vline(xintercept = median(hpc_clean$total_costs), color = "red") + 
+  geom_vline(xintercept = mean(hpc_clean$total_costs), color = "blue")
+```
+
+Distribution of response total costs is extremely right-skewed.
+
+Red line = median, blue line = mean
+
+Summary Statistics:
+
+```{r}
+summary(hpc_clean)
+```
+
+Pairs plot:
+
+```{r}
+#pairs(hpc_dummies)
+
+# Try pairs plot with log of total costs
+data_pairs <- hpc_dummies |> 
+  select(-c(rural, costs_bin, control_bin_Governmental,
+            control_bin_Voluntary, provider_bin_Specialized,
+            set)
+         ) |> 
+  mutate(total_costs = log(total_costs))
+
+pairs(data_pairs)
+```
+
+-   very high pairwise positive collinearity between:
+    -   total_days and bed_days, and total_discharges
+    -   salaries and employees on payroll
+-   total_costs appears to have fairly strong positive linear relationships with:
+    -   fte_employees_on_payroll
+    -   total_days
+    -   bed_days
+    -   total_discharges
+    -   salaries
+-   total_costs appears to have weak or no relationship with:
+    -   total_income
+    -   total_assets
+-   hard to discern any relationships for the categorical predictors
+-   for binary response, the predictors which have positive relationships with total cost have a pattern such that reponse = 0 corresponds to a higher concentration of points with low values of the predictor response = 1 corresponds to a wider range of values for the predictor. This same pattern shows up also for total assets and total income, which did not look associated with continuous total cost.
+
+# Train-test Split
+
+```{r}
+set.seed(1)
+
+train_prop <- 0.9
+
+n <- nrow(hpc_dummies)
+n_train <- train_prop*n
+n_test <- n - n_train
+
+hpc_dummies$set <- "Train"
+hpc_dummies$set[sample(n, n_test, replace = FALSE)] <- "Test"
+  
+df_train <- hpc_dummies |>  filter(set == "Train") |> select(-set)
+df_test <- hpc_dummies |> filter(set == "Test") |> select(-set)
+```
+
+# For all methods:
+
+-   For each method you apply, use 10 fold cross-validation estimate for the test error.
+-   discuss assumptions
+
+# Quantitative Outcome Analyses
+
+## Marginal simple linear regressions
+
+```{r}
+predictors <- select(df_train, -c(total_costs, costs_bin))
+
+# model summaries
+map(predictors, ~summary(lm(total_costs ~ .x, data = df_train)))
+
+simple_models <- map(predictors, ~lm(total_costs ~ .x, data = df_train))
+```
+
+10-fold cv
+
+```{r}
+# Estimate with k-fold:
+
+n_train <- nrow(df_train)
+
+k <- 10
+k.o <- k
+kvals <- unique(round(n_train/(1L:floor(n_train/2))))
+temp <- abs(kvals - k)
+if (!any(temp == 0))  { k <- kvals[temp == min(temp)][1L] }
+f <- ceiling(n_train/k)
+
+df_train$fold <- sample(rep(1L:k, f), n_train)
+
+predictor_names <- colnames(predictors)
+
+formulas <- str_c("total_costs", " ~ ", predictor_names)
+
+
+
+train_data = df_train
+
+formula = formulas[1]
+
+i = 1
+
+compute_MSEP_lm <- function(train_data, formula, i){
+  current_train_folds <- filter(train_data, fold != i)
+  current_test_fold <- filter(train_data, fold == i)
+    
+  mod <- lm(formula, data = current_train_folds)
+  pred <- predict(mod, newdata = select( current_test_fold, -c(total_costs, costs_bin) ) )
+    
+  MSEP <- mean( (current_test_fold$total_costs - pred) ^ 2 )
+  return(MSEP)
+}
+
+#compute_MSEP_lm(train_data, formula, i)
+
+kfold_cv_lm <- function(train_data, formula, k = 10){
+  
+  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_lm(train_data, formula, .x))
+  avg_MSEP <- mean(MSEP_vec)
+  return(avg_MSEP)
+  
+}
+
+kfold_cv_lm(train_data, formula)
+
+test_error_vec <- map_dbl( formulas, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+test_error_vec
+```
+
+## Multiple linear regression
+
+-   Add polynomial terms or transformations of some of the predictors
+-   Add at least two interaction terms that make sense to you
+
+## Regression Tree (with pruning)
+
+## Bagging (with variable importance)
+
+## Random Forest (with variable importance)
+
+## Boosting (including selecting the tuning parameter)
+
+## Neural Network
+
+# Variable Selection
+
+## Best Subset
+
+## Forward Stepwise
+
+## Backward Stepwise
+
+(For the above 3 methods, determine which model of a given size is best by comparing the 10-fold cross validation estimate of the test error.)
+
+## Ridge regression (find the best tuning parameter using cross-validation)
+
+## Lasso (find the best tuning parameter using cross-validation)
+
+## Principal Components Regression (PCR)
+
+# Qualitative Outcome Analyses
+
+## KNN
+
+```{r}
+# sample knn code
+
+knn_pred <- 
+    knn(
+      train = select(df_train, -c(total_cost, costs_bin)),
+      test = select(df_test, -c(total_cost, costs_bin)),
+      cl = df_train$costs_bin,
+      k = k,
+      prob = TRUE
+    )
+```
+
+## Multiple logistic regression
+
+-   Add polynomial terms or transformations of some of the predictors
+-   Add at least two interaction terms that make sense to you
+
+## LDA
+
+```{r}
+# sample code for LDA
+
+lda_auto <- MASS::lda(mpg01 ~ cylinders + displacement + horsepower + weight, data = auto_data)
+
+lda_auto_predictions <- predict(lda_auto, newdata = select(test_data, -mpg01))$class
+
+test_error2 <- mean(test_data$mpg01 != lda_auto_predictions)
+
+test_error2
+```
+
+## QDA
+
+```{r}
+
+## sample QDA code
+qda_auto <- MASS::qda(mpg01 ~ 
+                        cylinders + displacement + horsepower + weight, data = df_train)
+
+qda_auto_predictions <- predict(qda_auto, 
+                                newdata = dplyr::select(df_test, -c(mpg01, set)))$class
+
+test_error2 <- mean(df_test$mpg01 != qda_auto_predictions)
+
+test_error2
+```
+
+## Naive Bayes (at least two kernels)
+
+```{r}
+
+# sample code for naive Bayes gaussian
+nb_gaussian <- e1071::naiveBayes(mpg01 ~ 
+                        cylinders + displacement + horsepower + weight, data = df_train)
+
+nb_pred <- predict(nb_gaussian, newdata = dplyr::select(df_test, -c(mpg01, set)))
+
+test_error_nb <- mean(df_test$mpg01 != nb_pred)
+
+test_error_nb
+```
+
+## Decision Tree (with pruning)
+
+## Bagging (with variable importance)
+
+## Random Forest (with variable importance)
+
+## Boosting (including selecting the tuning parameter)
+
+(For the above three methods, calculate the Gini index on each leaf of the final tree to examine the purity of the node.)
+
+## Neural Network
+
+## Calculate True/False Positive/Negative rates for each method
+
+# Bootstrap CI
+
+# Simulation Study
