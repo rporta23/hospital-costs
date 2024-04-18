@@ -1,6 +1,6 @@
 ---
 title: "Data Cleaning"
-author: "Rose Porta"
+author: "Johnny Rasnic"
 date: "`r Sys.Date()`"
 output: pdf_document
 ---
@@ -33,7 +33,8 @@ hpc_clean <- hpc |>
            type_of_control >= 7 ~ "Governmental"
          ),
          provider_bin = ifelse(provider_type < 3 |
-                                 provider_type == 6,
+                                 provider_type == 6 |
+                                 provider_type == 11,
                                "General", "Specialized"
                                ),
          costs_bin  = ifelse(total_costs > median(total_costs), 1, 0)
@@ -108,6 +109,11 @@ ggplot(hpc_clean, aes(x = total_costs)) +
   geom_histogram() +
   geom_vline(xintercept = median(hpc_clean$total_costs), color = "red") + 
   geom_vline(xintercept = mean(hpc_clean$total_costs), color = "blue")
+
+ggplot(hpc_clean, aes(x = log(total_costs))) +
+  geom_histogram() +
+  geom_vline(xintercept = median(log(hpc_clean$total_costs)), color = "red") + 
+  geom_vline(xintercept = mean(log(hpc_clean$total_costs)), color = "blue")
 ```
 
 Distribution of response total costs is extremely right-skewed.
@@ -123,18 +129,19 @@ summary(hpc_clean)
 Pairs plot:
 
 ```{r}
-png("pairs.png", width=3840, height=2160)
-ggpairs(hpc_dummies)
-dev.off()
-# # Try pairs plot with log of total costs
-# data_pairs <- hpc_dummies |> 
-#   select(-c(rural, costs_bin, control_bin_Governmental,
-#             control_bin_Voluntary, provider_bin_Specialized,
-#             set)
-#          ) |> 
-#   mutate(total_costs = log(total_costs))
-# 
-# pairs(data_pairs)
+# # code to generate and save 4K resolution pairwise plot
+# png("pairs.png", width=3840, height=2160)
+# ggpairs(hpc_dummies)
+# dev.off()
+
+# Try pairs plot with log of total costs
+data_pairs <- hpc_dummies |>
+  select(-c(rural, costs_bin, control_bin_Governmental,
+            control_bin_Voluntary, provider_bin_Specialized)
+         ) |>
+  mutate(total_costs = log(total_costs))
+
+ggpairs(data_pairs, progress = FALSE)
 ```
 
 -   very high pairwise positive collinearity between:
@@ -150,7 +157,7 @@ dev.off()
     -   total_income
     -   total_assets
 -   hard to discern any relationships for the categorical predictors
--   for binary response, the predictors which have positive relationships with total cost have a pattern such that reponse = 0 corresponds to a higher concentration of points with low values of the predictor response = 1 corresponds to a wider range of values for the predictor. This same pattern shows up also for total assets and total income, which did not look associated with continuous total cost.
+-   for binary response, the predictors which have positive relationships with total cost have a pattern such that response = 0 corresponds to a higher concentration of points with low values of the predictor response = 1 corresponds to a wider range of values for the predictor. This same pattern shows up also for total assets and total income, which did not look associated with continuous total cost.
 
 # Train-test Split
 
@@ -263,6 +270,12 @@ test_error_vec
 
 ## Best Subset
 
+```{r}
+library(leaps)
+best_subset = regsubsets(total_costs ~ ., data = hpc_dummies[,-c("costs_bin", "set")])
+summary(best_subset)
+```
+
 ## Forward Stepwise
 
 ## Backward Stepwise
@@ -270,6 +283,14 @@ test_error_vec
 (For the above 3 methods, determine which model of a given size is best by comparing the 10-fold cross validation estimate of the test error.)
 
 ## Ridge regression (find the best tuning parameter using cross-validation)
+
+```{r}
+library(glmnet)
+x = scale(model.matrix(total_costs ~ ., data = hpc_dummies[,-c("costs_bin", "set")])[ , -1])
+
+lambda_grid <- 10 ^ seq(10, -2, length = 100)
+ridge_reg <- cv.glmnet(x, hpc_dummies$total_costs, alpha = 0, type.measure = "mse", lambda = lambda_grid, nfolds=10)
+```
 
 ## Lasso (find the best tuning parameter using cross-validation)
 
@@ -280,12 +301,14 @@ test_error_vec
 ## KNN
 
 ```{r}
+library(class)
+
 # sample knn code
 
 knn_pred <- 
     knn(
-      train = select(df_train, -c(total_cost, costs_bin)),
-      test = select(df_test, -c(total_cost, costs_bin)),
+      train = select(df_train, -c(total_costs, costs_bin)),
+      test = select(df_test, -c(total_costs, costs_bin)),
       cl = df_train$costs_bin,
       k = k,
       prob = TRUE
