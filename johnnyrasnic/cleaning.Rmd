@@ -8,10 +8,11 @@ output: pdf_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
+library(GGally)
 ```
 
 ```{r}
-hpc <- read_csv(here::here("hpc.csv"))
+hpc <- read_csv(here::here("/run/media/jrasnic/Home/jrasnic/Documents/School/STAT630/Final/hospital-costs/hpc.csv"))
 #summary(hpc)
 ```
 
@@ -122,17 +123,18 @@ summary(hpc_clean)
 Pairs plot:
 
 ```{r}
-#pairs(hpc_dummies)
-
-# Try pairs plot with log of total costs
-data_pairs <- hpc_dummies |> 
-  select(-c(rural, costs_bin, control_bin_Governmental,
-            control_bin_Voluntary, provider_bin_Specialized,
-            set)
-         ) |> 
-  mutate(total_costs = log(total_costs))
-
-pairs(data_pairs)
+png("pairs.png", width=3840, height=2160)
+ggpairs(hpc_dummies)
+dev.off()
+# # Try pairs plot with log of total costs
+# data_pairs <- hpc_dummies |> 
+#   select(-c(rural, costs_bin, control_bin_Governmental,
+#             control_bin_Voluntary, provider_bin_Specialized,
+#             set)
+#          ) |> 
+#   mutate(total_costs = log(total_costs))
+# 
+# pairs(data_pairs)
 ```
 
 -   very high pairwise positive collinearity between:
