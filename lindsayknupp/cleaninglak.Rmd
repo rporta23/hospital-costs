@@ -13,6 +13,19 @@ library(tidyverse)
 ```{r}
 hpc <- read_csv(here::here("hpc.csv"))
 #summary(hpc)
+
+df1 = hpc %>%
+  select(`Fiscal Year Begin Date`,`Fiscal Year End Date`,`Number of Beds`,`Total Bed Days Available`) %>%
+  mutate(start = as.Date(`Fiscal Year Begin Date`),end = as.Date(`Fiscal Year End Date`)) %>%
+  mutate(days = as.numeric(end - start)) %>%
+  mutate(numBeds = `Total Bed Days Available`/days,id = row_number())
+
+
+ggplot(df1) + 
+  geom_segment(aes(x = start, xend = end, y = id),linewidth = 0.2,linetype = 2)
+
+
+
 ```
 
 ```{r}
@@ -99,6 +112,10 @@ Codes for Provider Type:
 11 = Indian Health Services
 
 12 = Rural Emergency Hospital.
+
+Total_income : Total other income + Net Income from Service to Patients 
++ patient/other income larger than operating costs 
+- operating costs larger than patient/other income 
 
 # Exploratory Analysis
 
