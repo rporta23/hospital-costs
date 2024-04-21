@@ -1,5 +1,5 @@
 ---
-title: "Data Cleaning"
+title: "Rose Analysis"
 author: "Rose Porta"
 date: "`r Sys.Date()`"
 output: pdf_document
@@ -8,7 +8,13 @@ output: pdf_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
+library(caret)
+library(class)
+library(glmnet)
+library(naivebayes)
 ```
+
+# Data Cleaning
 
 ```{r}
 hpc <- read_csv(here::here("hpc.csv"))
@@ -92,110 +98,6 @@ hpc_dummies <- hpc_normalize |>
   tidytable::get_dummies(drop_first = TRUE) |> 
   select(where(is.numeric))
 ```
-
-Codes for type of Control:
-
-1 = Voluntary Non‐Profit‐Church
-
-2 = Voluntary Non‐Profit‐Other
-
-3 = Proprietary‐Individual
-
-4 = Proprietary‐Corporation
-
-5 = Proprietary‐Partnership
-
-6 = Proprietary‐Other
-
-7 = Governmental‐Federal
-
-8 = Governmental‐City‐County
-
-9 = Governmental‐County
-
-10 = Governmental‐State
-
-11 = Governmental‐Hospital District
-
-12 = Governmental‐City
-
-13 = Governmental‐Other
-
-Codes for Provider Type:
-
-1 = General Short Term (includes CAHs)
-
-2 = General Long Term
-
-3 = Cancer
-
-4 = Psychiatric
-
-5 = Rehabilitation
-
-6 = Religious Non‐Medical Health Care Institution
-
-7 = Children
-
-8 = Reserved for Future Use
-
-9 = Other
-
-10 = Extended Neoplastic Disease Care
-
-11 = Indian Health Services
-
-12 = Rural Emergency Hospital.
-
-# Exploratory Analysis
-
-```{r}
-ggplot(hpc_dummies, aes(x = total_costs)) +
-  geom_histogram() +
-  geom_vline(xintercept = median(hpc_dummies$total_costs), color = "red") + 
-  geom_vline(xintercept = mean(hpc_dummies$total_costs), color = "blue")
-```
-
-Distribution of response total costs is extremely right-skewed.
-
-Red line = median, blue line = mean
-
-Summary Statistics:
-
-```{r}
-summary(hpc_clean)
-```
-
-Pairs plot:
-
-```{r}
-pairs(hpc_dummies)
-
-# Try pairs plot with log of total costs
-data_pairs <- hpc_dummies |> 
-  select(-c(rural, costs_bin, control_bin_Governmental,
-            control_bin_Voluntary, provider_bin_Specialized,
-            set)
-         ) |> 
-  mutate(total_costs = log(total_costs))
-
-pairs(data_pairs)
-```
-
--   very high pairwise positive collinearity between:
-    -   total_days and bed_days, and total_discharges
-    -   salaries and employees on payroll
--   total_costs appears to have fairly strong positive linear relationships with:
-    -   fte_employees_on_payroll
-    -   total_days
-    -   bed_days
-    -   total_discharges
-    -   salaries
--   total_costs appears to have weak or no relationship with:
-    -   total_income
-    -   total_assets
--   hard to discern any relationships for the categorical predictors
--   for binary response, the predictors which have positive relationships with total cost have a pattern such that reponse = 0 corresponds to a higher concentration of points with low values of the predictor response = 1 corresponds to a wider range of values for the predictor. This same pattern shows up also for total assets and total income, which did not look associated with continuous total cost.
 
 # Train-test Split
 
@@ -289,10 +191,44 @@ test_error_vec <- map_dbl( formulas, ~kfold_cv_lm(df_train, formula = .x, k = 10
 test_error_vec
 ```
 
+True Test Error
+
+```{r}
+compute_MSEP_test <- function(formula, train_data, test_data){
+  
+  mod <- lm(formula, data = train_data)
+  pred <- predict(mod, newdata = select( test_data, -c(total_costs, costs_bin) ) )
+    
+  MSEP <- mean( (test_data$total_costs - pred) ^ 2 )
+  return(MSEP)
+}
+
+test_MSEP_vec <- map_dbl(formulas, ~compute_MSEP_test(.x, df_train, df_test))
+test_MSEP_vec
+```
+
+
 ## Multiple linear regression
 
 -   Add polynomial terms or transformations of some of the predictors
 -   Add at least two interaction terms that make sense to you
+
+```{r}
+train_data <- df_train |> select(-c(costs_bin, fold))
+mod_mlr <- lm(total_costs ~ ., data = train_data )
+
+summary(mod_mlr)
+```
+
+```{r}
+formula <- as.formula("total_costs ~ .")
+
+test_error <- compute_MSEP_test(formula, train_data, df_test)
+
+test_error
+```
+
+
 
 ## Regression Tree (with pruning)
 
@@ -329,12 +265,17 @@ test_error_vec
 
 knn_pred <- 
     knn(
-      train = select(df_train, -c(total_cost, costs_bin)),
-      test = select(df_test, -c(total_cost, costs_bin)),
+      train = select(df_train, -c(total_costs, costs_bin, fold)),
+      test = select(df_test, -c(total_costs, costs_bin)),
       cl = df_train$costs_bin,
       k = k,
       prob = TRUE
     )
+
+test_error <- mean(df_test$costs_bin != knn_pred)
+
+test_error
+
 ```
 
 ## Multiple logistic regression
@@ -342,50 +283,89 @@ knn_pred <-
 -   Add polynomial terms or transformations of some of the predictors
 -   Add at least two interaction terms that make sense to you
 
+```{r}
+train_data <- df_train |> select(-c(total_costs, fold))
+mod_mlogr <- glm(costs_bin ~ ., data = train_data, family = binomial(link = "logit") )
+
+summary(mod_mlogr)
+```
+
+```{r}
+log_pred <- predict( mod_mlogr, 
+                     newdata = select( df_test, -c(costs_bin, total_costs) ), 
+                     type = "response" 
+                     )
+pred_class <- ifelse(log_pred >= 0.5, 1, 0)
+
+test_error <- mean(df_test$costs_bin != pred_class)
+
+test_error
+```
+
+
 ## LDA
 
 ```{r}
-# sample code for LDA
 
-lda_auto <- MASS::lda(mpg01 ~ cylinders + displacement + horsepower + weight, data = auto_data)
+mod_lda <- MASS::lda(costs_bin ~ ., data = train_data)
 
-lda_auto_predictions <- predict(lda_auto, newdata = select(test_data, -mpg01))$class
+lda_pred <- predict( mod_lda, newdata = select( df_test, -c(costs_bin, total_costs) ) )$class
 
-test_error2 <- mean(test_data$mpg01 != lda_auto_predictions)
+test_error <- mean(df_test$costs_bin != lda_pred)
 
-test_error2
+test_error
 ```
 
 ## QDA
 
 ```{r}
 
-## sample QDA code
-qda_auto <- MASS::qda(mpg01 ~ 
-                        cylinders + displacement + horsepower + weight, data = df_train)
+mod_qda <- MASS::qda(costs_bin ~ ., data = train_data)
 
-qda_auto_predictions <- predict(qda_auto, 
-                                newdata = dplyr::select(df_test, -c(mpg01, set)))$class
+qda_pred <- predict( mod_qda, newdata = select( df_test, -c(costs_bin, total_costs) ) )$class
 
-test_error2 <- mean(df_test$mpg01 != qda_auto_predictions)
+test_error <- mean(df_test$costs_bin != qda_pred)
 
-test_error2
+test_error
 ```
 
 ## Naive Bayes (at least two kernels)
 
+### Gaussian Kernel
+
 ```{r}
+nb_gaussian <- e1071::naiveBayes(costs_bin ~ ., data = train_data)
 
-# sample code for naive Bayes gaussian
-nb_gaussian <- e1071::naiveBayes(mpg01 ~ 
-                        cylinders + displacement + horsepower + weight, data = df_train)
+nb_pred <- predict(nb_gaussian, newdata = select( df_test, -c(costs_bin, total_costs) ) )
 
-nb_pred <- predict(nb_gaussian, newdata = dplyr::select(df_test, -c(mpg01, set)))
-
-test_error_nb <- mean(df_test$mpg01 != nb_pred)
+test_error_nb <- mean(df_test$costs_bin != nb_pred)
 
 test_error_nb
 ```
+
+### Non Parametric Kernel Density Estimation
+
+```{r}
+predictor_matrix <- as.matrix(predictors)
+
+test_matrix <- df_test |> 
+  select( -c(costs_bin, total_costs) ) |> 
+  as.matrix()
+
+nb_KDE <-
+  nonparametric_naive_bayes(
+    y = as.factor(df_train %>% pull(costs_bin)),
+    x = predictor_matrix
+    )
+
+nb_kde_pred <- predict(nb_KDE, newdata = test_matrix )
+
+test_error_nb_kde_pred <- mean(df_test$costs_bin != nb_kde_pred)
+
+test_error_nb_kde_pred
+
+```
+
 
 ## Decision Tree (with pruning)
 
