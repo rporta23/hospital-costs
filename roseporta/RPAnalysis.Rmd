@@ -12,7 +12,33 @@ library(caret)
 library(class)
 library(glmnet)
 library(naivebayes)
+library(leaps)
+library(pls)
 ```
+
+To-dos 4/22/24:
+
+- pick an interaction and transformation
+
+- implement 10-fold cv for each method
+
+- 10-fold cv for choosing best subset model
+
+- repeat best subsets for categorical outcome
+
+- compile results into a cohesive table: method - cv estimated error - true test error (one table for quant and one for binary)
+
+- write down assumptions for each method
+
+- idea for simulation study
+
+- idea for bootstrap CI
+
+Questions:
+
+- how to interpret best subset for binary response?
+
+- perform best subset first and proceed with only selected predictors?
 
 # Data Cleaning
 
@@ -124,11 +150,39 @@ df_test <- hpc_dummies |> filter(set == "Test") |> select(-set)
 
 # Quantitative Outcome Analyses
 
-## Marginal simple linear regressions
+Set Up:
 
 ```{r}
 predictors <- select(df_train, -c(total_costs, costs_bin))
+```
 
+Assign Folds for 10-fold CV
+
+```{r}
+n_train <- nrow(df_train)
+
+k <- 10
+k.o <- k
+kvals <- unique(round(n_train/(1L:floor(n_train/2))))
+temp <- abs(kvals - k)
+if (!any(temp == 0))  { k <- kvals[temp == min(temp)][1L] }
+f <- ceiling(n_train/k)
+
+df_train$fold <- sample(rep(1L:k, f), n_train)
+```
+
+Remove categorical outcome and fold number from train and test data:
+
+```{r}
+train_data <- df_train |> select(-c(costs_bin, fold))
+
+test_data <- df_test |> select(-c(costs_bin))
+```
+
+
+## Marginal simple linear regressions
+
+```{r}
 # model summaries
 map(predictors, ~summary(lm(total_costs ~ .x, data = df_train)))
 
@@ -140,28 +194,10 @@ simple_models <- map(predictors, ~lm(total_costs ~ .x, data = df_train))
 ```{r}
 # Estimate with k-fold:
 
-n_train <- nrow(df_train)
-
-k <- 10
-k.o <- k
-kvals <- unique(round(n_train/(1L:floor(n_train/2))))
-temp <- abs(kvals - k)
-if (!any(temp == 0))  { k <- kvals[temp == min(temp)][1L] }
-f <- ceiling(n_train/k)
-
-df_train$fold <- sample(rep(1L:k, f), n_train)
-
 predictor_names <- colnames(predictors)
 
 formulas <- str_c("total_costs", " ~ ", predictor_names)
 
-
-
-train_data = df_train
-
-formula = formulas[1]
-
-i = 1
 
 compute_MSEP_lm <- function(train_data, formula, i){
   current_train_folds <- filter(train_data, fold != i)
@@ -214,7 +250,6 @@ test_MSEP_vec
 -   Add at least two interaction terms that make sense to you
 
 ```{r}
-train_data <- df_train |> select(-c(costs_bin, fold))
 mod_mlr <- lm(total_costs ~ ., data = train_data )
 
 summary(mod_mlr)
@@ -244,17 +279,147 @@ test_error
 
 ## Best Subset
 
+```{r}
+nvmax <- 12
+```
+
+
+```{r}
+regfit_best <- regsubsets(total_costs ~ ., data = train_data, nvmax = nvmax)
+summary_regfit <- summary(regfit_best)
+summary_regfit
+```
+
 ## Forward Stepwise
+
+```{r}
+# Forward stepwise selection -----
+regfit_fwd <- regsubsets(total_costs ~ ., data = train_data, nvmax = nvmax, method = "forward")
+summary_regfit <- summary(regfit_fwd)
+summary_regfit
+```
+
 
 ## Backward Stepwise
 
-(For the above 3 methods, determine which model of a given size is best by comparing the 10-fold cross validation estimate of the test error.)
+```{r}
+# Backward stepwise selection -----
+regfit_bwd <- regsubsets(total_costs ~ ., data = train_data, nvmax = nvmax, method = "backward")
+summary_regfit <- summary(regfit_bwd)
+summary_regfit
+```
+
+
+(For the above 3 methods, determine which model of a given size is best by comparing the 10-fold cross validation estimate of the test error.) ***
 
 ## Ridge regression (find the best tuning parameter using cross-validation)
 
+```{r}
+# scale predictors
+x_train <- scale(model.matrix(total_costs ~ ., data = train_data)[ , -1])
+y_train <- train_data$total_costs
+
+x_test <- scale(model.matrix(total_costs ~ ., data = test_data)[ , -1])
+y_test <- test_data$total_costs
+```
+
+
+```{r}
+set.seed(1)
+
+lambda_grid <- 10 ^ seq(10, -2, length = 100)
+cv_ridge <- 
+  cv.glmnet(
+    x_train,
+    y_train,
+    alpha = 0,
+    lambda = lambda_grid,
+    type.measure = "mse",
+    nfolds = 10        # Set the number of folds to n to get LOOCV
+    )
+
+cv_ridge$lambda.min
+
+lambda_min <- cv_ridge$lambda.min
+```
+
+```{r}
+ridge_reg <- glmnet(x_train, y_train, alpha = 0, lambda = cv_ridge$lambda.min)
+coef(ridge_reg)
+```
+
+```{r}
+pred_ridge <- predict(ridge_reg, newx = x_test)
+
+error_ridge <- mean( (test_data$total_costs - pred_ridge) ^ 2 )
+
+error_ridge
+```
+
+
+
 ## Lasso (find the best tuning parameter using cross-validation)
 
+```{r}
+
+set.seed(1)
+
+# fit lasso model
+lambda_grid <- 10 ^ seq(10, -2, length = 100)
+
+# 10-fold cross validation to choose tuning parameter
+cv_lasso <- 
+  cv.glmnet(
+    x,
+    y,
+    alpha = 1,
+    lambda = lambda_grid,
+    type.measure = "mse",
+    nfolds = 10        # Set the number of folds to n to get LOOCV
+    )
+
+cv_lasso$lambda.min
+```
+
+
+```{r}
+# fit lasso model with optimal tuning parameter
+lasso_bestlambda <- glmnet(x, y, alpha = 1, lambda = cv_lasso$lambda.min)
+coef(lasso_bestlambda)
+```
+
+```{r}
+pred_lasso <- predict(lasso_bestlambda, newx = x_test)
+
+error_lasso <- mean( (test_data$total_costs - pred_lasso) ^ 2 )
+
+error_lasso
+```
+
+
 ## Principal Components Regression (PCR)
+
+```{r}
+scaled_df_train <- bind_cols(total_costs = y_train, x_train)
+scaled_df_test <- bind_cols(total_costs = y_test, x_test)
+```
+
+```{r}
+pcr_fit <- pcr(total_costs ~ ., data = scaled_df_train, validation = "CV", segments = 10)
+summary(pcr_fit)
+```
+
+```{r}
+validationplot(pcr_fit, val.type = "MSEP")
+```
+
+```{r}
+pred_test <- predict(pcr_fit, scaled_df_test, ncomp = 8)
+
+test_error = mean( (scaled_df_test$total_costs - pred_test)^2 )
+
+test_error
+```
 
 # Qualitative Outcome Analyses
 
