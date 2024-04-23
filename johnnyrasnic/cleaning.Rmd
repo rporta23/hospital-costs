@@ -12,16 +12,21 @@ library(GGally)
 ```
 
 ```{r}
-hpc <- read_csv(here::here("/run/media/jrasnic/Home/jrasnic/Documents/School/STAT630/Final/hospital-costs/hpc.csv"))
+hpc <- read_csv(here::here("hpc.csv"))
 #summary(hpc)
+
+hpcdf <- hpc |> 
+  mutate(start = as.Date(`Fiscal Year Begin Date`),end = as.Date(`Fiscal Year End Date`)) |> 
+  mutate(days = as.numeric(end - start)) |> 
+  mutate(numBeds = `Total Bed Days Available`/days,id = row_number())
 ```
 
 ```{r}
-hpc_clean <- hpc |> 
+hpc_clean <- hpcdf |> 
   janitor::clean_names() |> 
-  select(total_costs, rural_versus_urban, provider_type, type_of_control,
+  select(provider_ccn, days, number_of_beds,
+         total_costs, rural_versus_urban, provider_type, type_of_control,
          fte_employees_on_payroll, total_days = total_days_v_xviii_xix_unknown,
-         bed_days = total_bed_days_available, 
          total_discharges = total_discharges_v_xviii_xix_unknown,
          total_income, total_assets,
          salaries = total_salaries_from_worksheet_a) |> 
@@ -33,17 +38,58 @@ hpc_clean <- hpc |>
            type_of_control >= 7 ~ "Governmental"
          ),
          provider_bin = ifelse(provider_type < 3 |
-                                 provider_type == 6 |
-                                 provider_type == 11,
+                                 provider_type == 6,
                                "General", "Specialized"
                                ),
-         costs_bin  = ifelse(total_costs > median(total_costs), 1, 0)
          ) |> 
   select(- c(rural_versus_urban, type_of_control, provider_type))
+
+duplicates <- hpc_clean |> 
+  group_by(provider_ccn) |> 
+  summarise(count = n()) |> 
+  filter(count > 1)
+
+dup <- map_lgl(hpc_clean$provider_ccn, `%in%`, duplicates$provider_ccn)
+
+hpc1 <- hpc_clean |> 
+  filter(!dup)
+
+hpc2 <- hpc_clean |> 
+  filter(dup) |> 
+  group_by(provider_ccn) |> 
+  summarise(
+    days = sum(days),
+    number_of_beds = mean(number_of_beds),
+    total_costs = sum(total_costs),
+    fte_employees_on_payroll = mean(fte_employees_on_payroll),
+    total_days = sum(total_days),
+    total_discharges = sum(total_discharges),
+    total_income = sum(total_income),
+    total_assets = mean(total_assets),
+    salaries = sum(salaries),
+    rural = max(rural),
+    control_bin = max(control_bin),
+    provider_bin = max(provider_bin)
+  )
+
+hpc_all <- bind_rows(hpc1, hpc2)
+
+hpc_normalize <- hpc_all |> 
+  mutate(
+    total_costs = total_costs/days,
+    inpatients = total_days/days,
+    total_discharges = total_discharges/days,
+    total_income = total_income/days,
+    salaries = salaries/days
+    )
 ```
 
 ```{r}
-hpc_dummies <- hpc_clean |> 
+hpc_dummies <- hpc_normalize |> 
+  select(-c(provider_ccn, days)) |> 
+  mutate(
+    costs_bin = ifelse(total_costs > median(total_costs), 1, 0)
+    ) |> 
   tidytable::get_dummies(drop_first = TRUE) |> 
   select(where(is.numeric))
 ```
@@ -137,7 +183,7 @@ Pairs plot:
 # Try pairs plot with log of total costs
 data_pairs <- hpc_dummies |>
   select(-c(rural, costs_bin, control_bin_Governmental,
-            control_bin_Voluntary, provider_bin_Specialized)
+            control_bin_Proprietary, provider_bin_Specialized)
          ) |>
   mutate(total_costs = log(total_costs))
 
@@ -177,6 +223,16 @@ df_train <- hpc_dummies |>  filter(set == "Train") |> select(-set)
 df_test <- hpc_dummies |> filter(set == "Test") |> select(-set)
 ```
 
+# 10-fold split
+
+```{r}
+set.seed(1)
+folds = floor(seq(1,11, length.out=nrow(hpc_dummies)+1))[1:nrow(hpc_dummies)]
+folds = sample(folds, length(folds))
+
+hpc_dummies$fold = folds
+```
+
 # For all methods:
 
 -   For each method you apply, use 10 fold cross-validation estimate for the test error.
@@ -198,58 +254,25 @@ simple_models <- map(predictors, ~lm(total_costs ~ .x, data = df_train))
 10-fold cv
 
 ```{r}
-# Estimate with k-fold:
 
-n_train <- nrow(df_train)
+coefficients_df = hpc_dummies |> select(-c(total_costs, costs_bin, set, fold)) |> mutate(across(everything(), as.numeric))
+MSE_df = coefficients_df[1:10,]
 
-k <- 10
-k.o <- k
-kvals <- unique(round(n_train/(1L:floor(n_train/2))))
-temp <- abs(kvals - k)
-if (!any(temp == 0))  { k <- kvals[temp == min(temp)][1L] }
-f <- ceiling(n_train/k)
-
-df_train$fold <- sample(rep(1L:k, f), n_train)
-
-predictor_names <- colnames(predictors)
-
-formulas <- str_c("total_costs", " ~ ", predictor_names)
-
-
-
-train_data = df_train
-
-formula = formulas[1]
-
-i = 1
-
-compute_MSEP_lm <- function(train_data, formula, i){
-  current_train_folds <- filter(train_data, fold != i)
-  current_test_fold <- filter(train_data, fold == i)
-    
-  mod <- lm(formula, data = current_train_folds)
-  pred <- predict(mod, newdata = select( current_test_fold, -c(total_costs, costs_bin) ) )
-    
-  MSEP <- mean( (current_test_fold$total_costs - pred) ^ 2 )
-  return(MSEP)
+for (i in 1:10) {
+  df_train_i = hpc_dummies |> filter(fold == i) |> select(-c(fold, set))
+  predictors <- select(df_train_i, -c(total_costs, costs_bin))
+  model <- map(predictors, ~lm(total_costs ~ .x, data = df_train_i))
+  for (j in colnames(predictors)) {
+    MSE_df[i,j] = mean((predict(model[[j]]) - df_train_i$total_costs)^2)
+  }
 }
 
-#compute_MSEP_lm(train_data, formula, i)
+ten_fold_mean_MSE = MSE_df |> summarize(across(everything(), mean))
 
-kfold_cv_lm <- function(train_data, formula, k = 10){
-  
-  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_lm(train_data, formula, .x))
-  avg_MSEP <- mean(MSEP_vec)
-  return(avg_MSEP)
-  
-}
-
-kfold_cv_lm(train_data, formula)
-
-test_error_vec <- map_dbl( formulas, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
-
-test_error_vec
+ten_fold_mean_MSE
 ```
+
+Above is MSE averaged over ten fold cross validation for each marginal linear regression on each predictor.
 
 ## Multiple linear regression
 
@@ -278,7 +301,19 @@ summary(best_subset)
 
 ## Forward Stepwise
 
+```{r}
+library(leaps)
+best_subset = regsubsets(total_costs ~ ., data = hpc_dummies[,-c("costs_bin", "set", "fold")], method="forward")
+summary(best_subset)
+```
+
 ## Backward Stepwise
+
+```{r}
+library(leaps)
+best_subset = regsubsets(total_costs ~ ., data = hpc_dummies[,-c("costs_bin", "set", "fold")], method="backward")
+summary(best_subset)
+```
 
 (For the above 3 methods, determine which model of a given size is best by comparing the 10-fold cross validation estimate of the test error.)
 
