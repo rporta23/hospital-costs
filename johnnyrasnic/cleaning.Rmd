@@ -321,13 +321,24 @@ summary(best_subset)
 
 ```{r}
 library(glmnet)
-x = scale(model.matrix(total_costs ~ ., data = hpc_dummies[,-c("costs_bin", "set")])[ , -1])
+x = scale(model.matrix(total_costs ~ ., data = hpc_dummies[,-c("costs_bin", "set", "fold")])[ , -1])
 
 lambda_grid <- 10 ^ seq(10, -2, length = 100)
 ridge_reg <- cv.glmnet(x, hpc_dummies$total_costs, alpha = 0, type.measure = "mse", lambda = lambda_grid, nfolds=10)
+lambda = ridge_reg$lambda.min
+
+ridge_model = glmnet(x, hpc_dummies$total_costs,alpha = 0, lambda = lambda, nfolds=10)
 ```
 
 ## Lasso (find the best tuning parameter using cross-validation)
+
+```{r}
+library(glmnet)
+x = scale(model.matrix(total_costs ~ ., data = hpc_dummies[,-c("costs_bin", "set", "fold")])[ , -1])
+
+lambda_grid <- 10 ^ seq(10, -2, length = 100)
+lasso_reg <- cv.glmnet(x, hpc_dummies$total_costs, alpha = 1, type.measure = "mse", lambda = lambda_grid, nfolds=10)
+```
 
 ## Principal Components Regression (PCR)
 
@@ -338,16 +349,30 @@ ridge_reg <- cv.glmnet(x, hpc_dummies$total_costs, alpha = 0, type.measure = "ms
 ```{r}
 library(class)
 
-# sample knn code
+K = 10
 
-knn_pred <- 
-    knn(
-      train = select(df_train, -c(total_costs, costs_bin)),
-      test = select(df_test, -c(total_costs, costs_bin)),
-      cl = df_train$costs_bin,
-      k = k,
-      prob = TRUE
-    )
+erates = rep(0,K)
+
+for (i in 1:K) {
+  knn.pred <- knn(df_train, df_test, df_train$costs_bin, k = i)
+  erates[i] = mean(knn.pred != df_test$costs_bin)
+}
+
+erates = matrix(rep(0, 10*K), nrow = 10, ncol =K)
+
+
+
+for (i in 1:10) {
+  for (j in 1:K) {
+    train.X = select(filter(hpc_dummies, fold != i), -c("fold", "set"))
+    test.X = select(filter(hpc_dummies, fold == i), -c("fold", "set"))
+    
+    knn.pred <- knn(train.X, test.X, train.X$costs_bin, k = j)
+   erates[[i,j]] = mean(knn.pred != test.X$costs_bin)
+  }
+}
+
+as_tibble(erates) |> summarize(across(everything(), mean))
 ```
 
 ## Multiple logistic regression
@@ -360,42 +385,66 @@ knn_pred <-
 ```{r}
 # sample code for LDA
 
-lda_auto <- MASS::lda(mpg01 ~ cylinders + displacement + horsepower + weight, data = auto_data)
+lda_costs <- MASS::lda(costs_bin ~ ., data = df_train)
 
-lda_auto_predictions <- predict(lda_auto, newdata = select(test_data, -mpg01))$class
+lda_costs_pred <- predict(lda_costs, newdata = select(df_test, -costs_bin))$class
 
-test_error2 <- mean(test_data$mpg01 != lda_auto_predictions)
+test_error <- mean(df_test$costs_bin != lda_costs_pred)
 
-test_error2
+test_error
+
+erates = rep(0, 10)
+
+for (i in 1:10) {
+    train.X = select(filter(hpc_dummies, fold != i), -c("fold", "set"))
+    test.X = select(filter(hpc_dummies, fold == i), -c("fold", "set"))
+    
+    lda_costs <- MASS::lda(costs_bin ~ ., data = train.X)
+
+    lda_costs_pred <- predict(lda_costs, newdata = select(test.X, -c("costs_bin")))$class
+    
+    erates[i] = mean(lda_costs_pred != test.X$costs_bin)
+}
 ```
 
 ## QDA
 
 ```{r}
 
-## sample QDA code
-qda_auto <- MASS::qda(mpg01 ~ 
-                        cylinders + displacement + horsepower + weight, data = df_train)
+qda_costs <- MASS::qda(costs_bin ~ ., data = df_train)
 
-qda_auto_predictions <- predict(qda_auto, 
-                                newdata = dplyr::select(df_test, -c(mpg01, set)))$class
+qda_costs_pred <- predict(qda_costs, newdata = select(df_test, -costs_bin))$class
 
-test_error2 <- mean(df_test$mpg01 != qda_auto_predictions)
+test_error <- mean(df_test$costs_bin != qda_costs_pred)
 
-test_error2
+test_error
+
+erates = rep(0, 10)
+
+for (i in 1:10) {
+    train.X = select(filter(hpc_dummies, fold != i), -c("fold", "set"))
+    test.X = select(filter(hpc_dummies, fold == i), -c("fold", "set"))
+    
+    qda_costs <- MASS::qda(costs_bin ~ ., data = train.X)
+
+    qda_costs_pred <- predict(qda_costs, newdata = select(test.X, -c("costs_bin")))$class
+    
+    erates[i] = mean(qda_costs_pred != test.X$costs_bin)
+}
+erates
 ```
 
 ## Naive Bayes (at least two kernels)
 
 ```{r}
+library(e1071)
 
 # sample code for naive Bayes gaussian
-nb_gaussian <- e1071::naiveBayes(mpg01 ~ 
-                        cylinders + displacement + horsepower + weight, data = df_train)
+nb_gaussian <- e1071::naiveBayes(costs_bin ~ ., data = df_train)
 
-nb_pred <- predict(nb_gaussian, newdata = dplyr::select(df_test, -c(mpg01, set)))
+nb_pred <- predict(nb_gaussian, newdata = df_test)
 
-test_error_nb <- mean(df_test$mpg01 != nb_pred)
+test_error_nb <- mean(df_test$costs_bin != nb_pred)
 
 test_error_nb
 ```
