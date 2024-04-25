@@ -14,31 +14,18 @@ library(tidyverse)
 hpc <- read_csv(here::here("hpc.csv"))
 #summary(hpc)
 
-hpc %>%
-  distinct(`Provider CCN`)
-
-df1 = hpc %>%
-  mutate(start = as.Date(`Fiscal Year Begin Date`),end = as.Date(`Fiscal Year End Date`)) %>%
-  mutate(days = as.numeric(end - start)) %>%
+hpcdf <- hpc |> 
+  mutate(start = as.Date(`Fiscal Year Begin Date`),end = as.Date(`Fiscal Year End Date`)) |> 
+  mutate(days = as.numeric(end - start)) |> 
   mutate(numBeds = `Total Bed Days Available`/days,id = row_number())
-
-ggplot(df1) + 
-  geom_point(aes(x=days,y=`Total Assets`))
-
-ggplot(df1) +
-  geom_histogram(aes(x=days))
-
-
-ggplot(df1) + 
-  geom_segment(aes(x = start, xend = end, y = id),linewidth = 0.2,linetype = 2)
 ```
 
 ```{r}
-hpc_clean <- hpc |> 
+hpc_clean <- hpcdf |> 
   janitor::clean_names() |> 
-  select(provider_ccn,total_costs, rural_versus_urban, provider_type, type_of_control,
+  select(provider_ccn, days, number_of_beds,
+         total_costs, rural_versus_urban, provider_type, type_of_control,
          fte_employees_on_payroll, total_days = total_days_v_xviii_xix_unknown,
-         bed_days = total_bed_days_available, 
          total_discharges = total_discharges_v_xviii_xix_unknown,
          total_income, total_assets,
          salaries = total_salaries_from_worksheet_a) |> 
@@ -53,36 +40,55 @@ hpc_clean <- hpc |>
                                  provider_type == 6,
                                "General", "Specialized"
                                ),
-         costs_bin  = ifelse(total_costs > median(total_costs), 1, 0)
          ) |> 
   select(- c(rural_versus_urban, type_of_control, provider_type))
+
+duplicates <- hpc_clean |> 
+  group_by(provider_ccn) |> 
+  summarise(count = n()) |> 
+  filter(count > 1)
+
+dup <- map_lgl(hpc_clean$provider_ccn, `%in%`, duplicates$provider_ccn)
+
+hpc1 <- hpc_clean |> 
+  filter(!dup)
+
+hpc2 <- hpc_clean |> 
+  filter(dup) |> 
+  group_by(provider_ccn) |> 
+  summarise(
+    days = sum(days),
+    number_of_beds = mean(number_of_beds),
+    total_costs = sum(total_costs),
+    fte_employees_on_payroll = mean(fte_employees_on_payroll),
+    total_days = sum(total_days),
+    total_discharges = sum(total_discharges),
+    total_income = sum(total_income),
+    total_assets = mean(total_assets),
+    salaries = sum(salaries),
+    rural = max(rural),
+    control_bin = max(control_bin),
+    provider_bin = max(provider_bin)
+  )
+
+hpc_all <- bind_rows(hpc1, hpc2)
+
+hpc_normalize <- hpc_all |> 
+  mutate(
+    total_costs = total_costs/days,
+    inpatients = total_days/days,
+    total_discharges = total_discharges/days,
+    total_income = total_income/days,
+    salaries = salaries/days
+    )
 ```
 
 ```{r}
-ccnnum = hpc_clean %>%
-  group_by(provider_ccn) %>%
-  mutate(counts = n()) %>%
-  select(provider_ccn, counts) %>%
-  filter(counts > 1) %>%
-  select(provider_ccn) %>%
-  pull()
-  
-
-a = hpc %>%
-  filter(`Provider CCN` %in% ccnnum)
-
-
-b = a %>%
-  mutate(start = as.Date(`Fiscal Year Begin Date`),end = as.Date(`Fiscal Year End Date`)) %>%
-  mutate(days = as.numeric(end - start)) 
-
-```
-
-
-
-
-```{r}
-hpc_dummies <- hpc_clean |> 
+hpc_dummies <- hpc_normalize |> 
+  select(-c(provider_ccn, days)) |> 
+  mutate(
+    costs_bin = ifelse(total_costs > median(total_costs), 1, 0)
+    ) |> 
   tidytable::get_dummies(drop_first = TRUE) |> 
   select(where(is.numeric))
 ```
@@ -141,10 +147,6 @@ Codes for Provider Type:
 
 12 = Rural Emergency Hospital.
 
-Total_income : Total other income + Net Income from Service to Patients 
-+ patient/other income larger than operating costs 
-- operating costs larger than patient/other income 
-
 # Exploratory Analysis
 
 ```{r}
@@ -167,7 +169,10 @@ summary(hpc_clean)
 Pairs plot:
 
 ```{r}
-#pairs(hpc_dummies)
+hpc_dummies %>%
+  select(-set) %>%
+  pairs()
+pairs(hpc_dummies)
 
 # Try pairs plot with log of total costs
 data_pairs <- hpc_dummies |> 
@@ -213,10 +218,28 @@ df_train <- hpc_dummies |>  filter(set == "Train") |> select(-set)
 df_test <- hpc_dummies |> filter(set == "Test") |> select(-set)
 ```
 
+# Train set-fold assignment 
+```{r}
+set.seed(1)
+
+n_train <- nrow(df_train)
+
+k <- 10
+k.o <- k
+kvals <- unique(round(n_train/(1L:floor(n_train/2))))
+temp <- abs(kvals - k)
+if (!any(temp == 0))  { k <- kvals[temp == min(temp)][1L] }
+f <- ceiling(n_train/k)
+
+df_train$fold <- sample(rep(1L:k, f), n_train)
+```
+
+
 # For all methods:
 
 -   For each method you apply, use 10 fold cross-validation estimate for the test error.
 -   discuss assumptions
+
 
 # Quantitative Outcome Analyses
 
@@ -236,21 +259,9 @@ simple_models <- map(predictors, ~lm(total_costs ~ .x, data = df_train))
 ```{r}
 # Estimate with k-fold:
 
-n_train <- nrow(df_train)
-
-k <- 10
-k.o <- k
-kvals <- unique(round(n_train/(1L:floor(n_train/2))))
-temp <- abs(kvals - k)
-if (!any(temp == 0))  { k <- kvals[temp == min(temp)][1L] }
-f <- ceiling(n_train/k)
-
-df_train$fold <- sample(rep(1L:k, f), n_train)
-
 predictor_names <- colnames(predictors)
 
 formulas <- str_c("total_costs", " ~ ", predictor_names)
-
 
 
 train_data = df_train
@@ -291,6 +302,24 @@ test_error_vec
 
 -   Add polynomial terms or transformations of some of the predictors
 -   Add at least two interaction terms that make sense to you
+```{r}
+qual_predictor_names = c(predictor_names[1:7],predictor_names[9])
+predictor_names
+
+multiple_lm <- summary(lm(total_costs ~ number_of_beds + fte_employees_on_payroll
+                          + total_days + total_discharges + total_income 
+                          + total_assets + salaries + rural + inpatients
+                          + control_bin_Governmental + control_bin_Proprietary
+                          + provider_bin_Specialized, data = df_train))
+
+transformation_lm <- summary(lm(total_costs ~ fte_employees_on_payroll*total_income, data = df_train))
+
+polynomial_lm <- summary(lm(total_costs ~ salaries + I(salaries^2),data = df_train))
+
+ggplot(df_train) + 
+  geom_point(aes(x=number_of_beds,y=total_costs))
+```
+
 
 ## Regression Tree (with pruning)
 
@@ -306,17 +335,339 @@ test_error_vec
 
 ## Best Subset
 
+```{r}
+library(leaps)
+
+set.seed(1)
+
+train <- df_train %>%
+  select(-costs_bin,-fold)
+
+regfit_full <- regsubsets(total_costs ~ ., train,nvmax = 12,method = "exhaustive")
+summary(regfit_full)
+```
+
+k-fold CV 
+```{r}
+compute_MSEP_lm <- function(train_data, formula, i){
+  current_train_folds <- filter(train_data, fold != i)
+  current_test_fold <- filter(train_data, fold == i)
+    
+  mod <- lm(formula, data = current_train_folds)
+  pred <- predict(mod, newdata = select( current_test_fold, -c(total_costs, costs_bin, fold) ) )
+    
+  MSEP <- mean( (current_test_fold$total_costs - pred) ^ 2 )
+  return(MSEP)
+}
+
+kfold_cv_lm <- function(train_data, formula, k = 10){
+  
+  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_lm(train_data, formula, .x))
+  avg_MSEP <- mean(MSEP_vec)
+  return(avg_MSEP)
+  
+}
+```
+
+```{r}
+best_subset_cv <- tibble("avgMSEP" = rep(NA,12))
+
+# k-fold CV for 1 predictor: salaries
+formula = "total_costs ~ salaries"
+best_subset_cv$avgMSEP[1] <- map_dbl(formula, ~kfold_cv_lm(df_train, formula = .x, k = 10))
+
+# k-fold CV for 2 predictors: 
+formula = "total_costs ~ salaries + inpatients"
+best_subset_cv$avgMSEP[2] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 3 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized"
+best_subset_cv$avgMSEP[3] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 4 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll"
+best_subset_cv$avgMSEP[4] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 5 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets"
+best_subset_cv$avgMSEP[5] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 6 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary"
+best_subset_cv$avgMSEP[6] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 7 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges"
+best_subset_cv$avgMSEP[7] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 8 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges + total_income"
+best_subset_cv$avgMSEP[8] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 9 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges +
+total_income + number_of_beds"
+best_subset_cv$avgMSEP[9] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 10 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges +
+total_income + number_of_beds + control_bin_Governmental"
+best_subset_cv$avgMSEP[10] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 11 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges +
+total_income + number_of_beds + control_bin_Governmental + rural"
+best_subset_cv$avgMSEP[11] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 12 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges +
+total_income + number_of_beds + control_bin_Governmental + rural + total_days"
+best_subset_cv$avgMSEP[12] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+```
+
 ## Forward Stepwise
+```{r}
+library(leaps)
+
+set.seed(1)
+
+train <- df_train %>%
+  select(-costs_bin,-fold)
+
+regfit_fwd <- regsubsets(total_costs ~ ., train,nvmax = 12,method = "forward")
+summary(regfit_fwd)
+```
+
+Forward stepwise CV
+```{r}
+forward_stepwise_cv <- tibble("avgMSEP" = rep(NA,12))
+
+# k-fold CV for 1 predictor: 
+formula = "total_costs ~ salaries"
+forward_stepwise_cv$avgMSEP[1] <- map_dbl(formula, ~kfold_cv_lm(df_train, formula = .x, k = 10))
+
+# k-fold CV for 2 predictors: 
+formula = "total_costs ~ salaries + inpatients"
+forward_stepwise_cv$avgMSEP[2] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 3 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized"
+forward_stepwise_cv$avgMSEP[3] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 4 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll"
+forward_stepwise_cv$avgMSEP[4] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 5 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets"
+forward_stepwise_cv$avgMSEP[5] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 6 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary"
+forward_stepwise_cv$avgMSEP[6] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 7 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges"
+forward_stepwise_cv$avgMSEP[7] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 8 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges + total_income"
+forward_stepwise_cv$avgMSEP[8] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 9 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges +
+total_income + number_of_beds"
+forward_stepwise_cv$avgMSEP[9] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 10 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges +
+total_income + number_of_beds + control_bin_Governmental"
+forward_stepwise_cv$avgMSEP[10] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 11 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges +
+total_income + number_of_beds + control_bin_Governmental + rural"
+forward_stepwise_cv$avgMSEP[11] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 12 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges +
+total_income + number_of_beds + control_bin_Governmental + rural + total_days"
+forward_stepwise_cv$avgMSEP[12] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+```
 
 ## Backward Stepwise
+
+```{r}
+library(leaps)
+
+set.seed(1)
+
+train <- df_train %>%
+  select(-costs_bin,-fold)
+
+regfit_bwd <- regsubsets(total_costs ~ ., train,nvmax = 12,method = "backward")
+summary(regfit_bwd)
+```
+
+Backward stepwise CV 
+```{r}
+backward_stepwise_cv <- tibble("avgMSEP" = rep(NA,12))
+
+# k-fold CV for 1 predictor: 
+formula = "total_costs ~ salaries"
+backward_stepwise_cv$avgMSEP[1] <- map_dbl(formula, ~kfold_cv_lm(df_train, formula = .x, k = 10))
+
+# k-fold CV for 2 predictors: 
+formula = "total_costs ~ salaries + inpatients"
+backward_stepwise_cv$avgMSEP[2] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 3 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized"
+backward_stepwise_cv$avgMSEP[3] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 4 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll"
+backward_stepwise_cv$avgMSEP[4] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 5 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets"
+backward_stepwise_cv$avgMSEP[5] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 6 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary"
+backward_stepwise_cv$avgMSEP[6] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 7 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges"
+backward_stepwise_cv$avgMSEP[7] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 8 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges + total_income"
+backward_stepwise_cv$avgMSEP[8] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 9 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges +
+total_income + number_of_beds"
+backward_stepwise_cv$avgMSEP[9] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 10 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges +
+total_income + number_of_beds + control_bin_Governmental"
+backward_stepwise_cv$avgMSEP[10] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 11 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges +
+total_income + number_of_beds + control_bin_Governmental + rural"
+backward_stepwise_cv$avgMSEP[11] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+# k-fold CV for 12 predictors: 
+formula = "total_costs ~ salaries + inpatients + provider_bin_Specialized + fte_employees_on_payroll + total_assets + control_bin_Proprietary + total_discharges +
+total_income + number_of_beds + control_bin_Governmental + rural + total_days"
+backward_stepwise_cv$avgMSEP[12] <- map_dbl( formula, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+```
 
 (For the above 3 methods, determine which model of a given size is best by comparing the 10-fold cross validation estimate of the test error.)
 
 ## Ridge regression (find the best tuning parameter using cross-validation)
 
+```{r}
+library(glmnet)
+
+set.seed(1)
+train <- df_train %>%
+  select(-c(costs_bin,fold))
+
+numerical_pred <- train %>%
+  select(-c(rural,control_bin_Governmental,control_bin_Proprietary,provider_bin_Specialized))
+
+qualitative_pred <- train %>%
+  select(c(rural,control_bin_Governmental,control_bin_Proprietary,provider_bin_Specialized,total_costs))
+
+numerical_pred_mat = scale(model.matrix(total_costs ~ ., data = numerical_pred)[ , -1])
+qualitative_pred_mat = model.matrix(total_costs ~ ., data = qualitative_pred)[ , -1]
+
+design_mat = cbind(numerical_pred_mat,qualitative_pred_mat)
+
+x <- design_mat
+y <- train$total_costs
+
+# Lasso model 
+lambda_grid <- 10 ^ seq(10, -2, length = 100)
+lasso_reg <- glmnet(x, y, alpha = 0, lambda = lambda_grid) 
+
+# Perform 10-fold cross validation 
+cv.out <- cv.glmnet(x, y, alpha = 0)
+bestmean <- min(cv.out$cvm) # lowest error 
+bestlambda <- cv.out$lambda[which(cv.out$cvm == bestmean)]
+```
+
 ## Lasso (find the best tuning parameter using cross-validation)
 
+```{r}
+library(glmnet)
+
+set.seed(1)
+train <- df_train %>%
+  select(-c(costs_bin,fold))
+
+numerical_pred <- train %>%
+  select(-c(rural,control_bin_Governmental,control_bin_Proprietary,provider_bin_Specialized))
+
+qualitative_pred <- train %>%
+  select(c(rural,control_bin_Governmental,control_bin_Proprietary,provider_bin_Specialized,total_costs))
+
+numerical_pred_mat = scale(model.matrix(total_costs ~ ., data = numerical_pred)[ , -1])
+qualitative_pred_mat = model.matrix(total_costs ~ ., data = qualitative_pred)[ , -1]
+
+design_mat = cbind(numerical_pred_mat,qualitative_pred_mat)
+
+x <- design_mat
+y <- train$total_costs
+
+# Lasso model 
+lambda_grid <- 10 ^ seq(10, -2, length = 100)
+lasso_reg <- glmnet(x, y, alpha = 1, lambda = lambda_grid) 
+
+# Perform 10-fold cross validation 
+cv.out <- cv.glmnet(x, y, alpha = 1)
+bestmean <- min(cv.out$cvm) # lowest error 
+bestlambda <- cv.out$lambda[which(cv.out$cvm == bestmean)]
+```
+
 ## Principal Components Regression (PCR)
+
+```{r}
+library(pls)
+
+set.seed(1)
+train <- df_train %>%
+  select(-c(costs_bin,fold))
+
+test <- df_test %>%
+  select(-c(costs_bin))
+
+numerical_pred <- train %>%
+  select(-c(rural,control_bin_Governmental,control_bin_Proprietary,provider_bin_Specialized))
+
+qualitative_pred <- train %>%
+  select(c(rural,control_bin_Governmental,control_bin_Proprietary,provider_bin_Specialized,total_costs))
+
+numerical_pred_mat = scale(model.matrix(total_costs ~ ., data = numerical_pred)[ , -1])
+qualitative_pred_mat = model.matrix(total_costs ~ ., data = qualitative_pred)[ , -1]
+
+response_mat = train %>%
+  select(total_costs)%>%
+  as.matrix()
+
+design_df = as.data.frame(cbind(numerical_pred_mat,qualitative_pred_mat,response_mat))
+
+pcr.fit <-pcr(total_costs ~ ., data = design_df, scale = FALSE, validation = "CV")
+summary(pcr.fit)
+validationplot(pcr.fit, val.type = "MSEP")
+
+pcr.pred <-predict(pcr.fit, test, ncomp = 12)
+mean((pcr.pred- test$total_costs)^2)
+```
 
 # Qualitative Outcome Analyses
 
