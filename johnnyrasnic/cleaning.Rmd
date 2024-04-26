@@ -239,7 +239,7 @@ hpc_qual = hpc_dummies |> select(c(provider_bin_Specialized, control_bin_Governm
 
 hpc_scaled = as_tibble(scale(hpc_quant) |> cbind(hpc_qual))
 
-df_train = hpc_scaled|>  filter(set == "Train") |> select(-c(set, fold))
+df_train = hpc_scaled |>  filter(set == "Train") |> select(-c(set, fold))
 df_test = hpc_scaled |> filter(set == "Test") |> select(-c(set, fold))
 ```
 
@@ -287,10 +287,12 @@ Above is MSE averaged over ten fold cross validation for each marginal linear re
 ## Multiple linear regression
 
 ```{r}
-train.X = df_train |> select(-c("costs_bin")) |> mutate(beds2 = number_of_beds^2)
-test.X = df_test |> select(-c("costs_bin")) |> mutate(beds2 = number_of_beds^2)
+train.X = df_train |> select(-c("costs_bin"))
+test.X = df_test |> select(-c("costs_bin"))
 
 lin_model = lm(total_costs ~ ., data=train.X)
+
+summary(lin_model)
 
 pred = predict(lin_model, newdata = test.X)
 
@@ -299,11 +301,11 @@ mean((pred - test.X$total_costs)^2)
 erates = rep(0,10)
 
 for (i in 1:10) {
-  train.X = hpc_dummies |> filter(fold != i) |> 
+  train.X = hpc_scaled |> filter(fold != i) |> 
     select(-c("costs_bin", "fold", "set")) |> 
     mutate(beds2 = number_of_beds^2)
   
-  test.X = hpc_dummies |> filter(fold == i) |> 
+  test.X = hpc_scaled |> filter(fold == i) |> 
     select(-c("costs_bin", "fold", "set")) |> 
     mutate(beds2 = number_of_beds^2)
   
@@ -313,10 +315,83 @@ for (i in 1:10) {
   
   erates[i] = mean((pred - test.X$total_costs)^2)
 }
+
+erates
 ```
 
 -   Add polynomial terms or transformations of some of the predictors
+
+    ```{r}
+    train.X = df_train |> select(-c("costs_bin")) |> 
+                          mutate(days2 = total_days^2, salaries2 = salaries^2)
+    test.X = df_test |> select(-c("costs_bin")) |> 
+                        mutate(days2 = total_days^2, salaries2 = salaries^2)
+
+    lin_model = lm(total_costs ~ ., data=train.X)
+
+    summary(lin_model)
+
+    pred = predict(lin_model, newdata = test.X)
+
+    mean((pred - test.X$total_costs)^2)
+
+    erates = rep(0,10)
+
+    for (i in 1:10) {
+      train.X = hpc_scaled |> filter(fold != i) |> 
+        select(-c("costs_bin", "fold", "set")) |> 
+        mutate(beds2 = number_of_beds^2)
+      
+      test.X = hpc_scaled |> filter(fold == i) |> 
+        select(-c("costs_bin", "fold", "set")) |> 
+        mutate(beds2 = number_of_beds^2)
+      
+      lin_model = lm(total_costs ~ ., data=train.X)
+      
+      pred = predict(lin_model, newdata = test.X)
+      
+      erates[i] = mean((pred - test.X$total_costs)^2)
+    }
+
+    erates
+    ```
+
 -   Add at least two interaction terms that make sense to you
+
+    ```{r}
+    train.X = df_train |> select(-c("costs_bin")) |> 
+                          mutate(employees_x_total_income = fte_employees_on_payroll * total_income, specialized_employees_interaction = provider_bin_Specialized * fte_employees_on_payroll)
+    test.X = df_test |> select(-c("costs_bin")) |> 
+                        mutate(employees_x_total_income = fte_employees_on_payroll * total_income, specialized_employees_interaction = provider_bin_Specialized * fte_employees_on_payroll)
+
+    lin_model = lm(total_costs ~ ., data=train.X)
+
+    summary(lin_model)
+
+    pred = predict(lin_model, newdata = test.X)
+
+    mean((pred - test.X$total_costs)^2)
+
+    erates = rep(0,10)
+
+    for (i in 1:10) {
+      train.X = hpc_dummies |> filter(fold != i) |> 
+        select(-c("costs_bin", "fold", "set")) |> 
+        mutate(beds2 = number_of_beds^2)
+      
+      test.X = hpc_dummies |> filter(fold == i) |> 
+        select(-c("costs_bin", "fold", "set")) |> 
+        mutate(beds2 = number_of_beds^2)
+      
+      lin_model = lm(total_costs ~ ., data=train.X)
+      
+      pred = predict(lin_model, newdata = test.X)
+      
+      erates[i] = mean((pred - test.X$total_costs)^2)
+    }
+
+    erates
+    ```
 
 ## Regression Tree (with pruning)
 
@@ -359,6 +434,8 @@ for (i in 1:10) {
 erates = as_tibble(erates) |> summarize(across(V1:V12,mean))
 
 erates
+
+which(erates == min(erates))
 ```
 
 ## Forward Stepwise
@@ -390,6 +467,8 @@ for (i in 1:10) {
 erates = as_tibble(erates) |> summarize(across(V1:V12,mean))
 
 erates
+
+which(erates == min(erates))
 ```
 
 ## Backward Stepwise
@@ -421,6 +500,8 @@ for (i in 1:10) {
 erates = as_tibble(erates) |> summarize(across(V1:V12,mean))
 
 erates
+
+which(erates == min(erates))
 ```
 
 (For the above 3 methods, determine which model of a given size is best by comparing the 10-fold cross validation estimate of the test error.)
@@ -522,6 +603,7 @@ as_tibble(erates) |> summarize(across(everything(), mean))
 -   Add at least two interaction terms that make sense to you
 
 ```{r}
+suppressWarnings({
 
 train.X = df_train |> select(-c("total_costs"))
 test.X = df_test |> select(-c("total_costs"))
@@ -533,6 +615,12 @@ pred = round(predict(logist_model, newdata = test.X, type="response"))
 erate = mean(pred != test.X$costs_bin)
 
 erate
+
+})
+
+summary(logist_model)
+
+suppressWarnings({
 
 erates = rep(0, 10)
 
@@ -548,6 +636,89 @@ for (i in 1:10) {
 }
 
 erates
+})
+```
+
+```{r}
+suppressWarnings({
+
+train.X = df_train |> select(-c("total_costs")) |> 
+                      mutate(employees_x_total_income = fte_employees_on_payroll * total_income, specialized_employees_interaction = provider_bin_Specialized * fte_employees_on_payroll)
+
+test.X = df_test |> select(-c("total_costs")) |> mutate(employees_x_total_income = fte_employees_on_payroll * total_income, specialized_employees_interaction = provider_bin_Specialized * fte_employees_on_payroll)
+
+logist_model = glm(costs_bin ~ ., data=train.X, family="binomial")
+
+pred = round(predict(logist_model, newdata = test.X, type="response"))
+
+erate = mean(pred != test.X$costs_bin)
+
+erate
+
+})
+
+suppressWarnings({
+
+erates = rep(0, 10)
+
+for (i in 1:10) {
+  train.X = hpc_scaled |> filter(fold != i) |> select(-c("total_costs", "set", "fold")) |> mutate(employees_x_total_income = fte_employees_on_payroll * total_income, specialized_employees_interaction = provider_bin_Specialized * fte_employees_on_payroll)
+  
+  test.X = hpc_scaled |> filter(fold == i) |> select(-c("total_costs", "set", "fold")) |> mutate(employees_x_total_income = fte_employees_on_payroll * total_income, specialized_employees_interaction = provider_bin_Specialized * fte_employees_on_payroll)
+
+  logist_model = glm(costs_bin ~ ., data=train.X, family="binomial")
+  
+  pred = round(predict(logist_model, newdata = test.X, type="response"))
+  
+  erates[i] = mean(pred != test.X$costs_bin)
+}
+
+erates
+
+})
+```
+
+```{r}
+
+suppressWarnings({
+
+train.X = df_train |> select(-c("total_costs")) |> 
+                      mutate(days2 = total_days^2, salaries2 = salaries^2)
+test.X = df_test |> select(-c("total_costs")) |> 
+                    mutate(days2 = total_days^2, salaries2 = salaries^2)
+
+logist_model = glm(costs_bin ~ ., data=train.X, family="binomial")
+
+pred = round(predict(logist_model, newdata = test.X, type="response"))
+
+erate = mean(pred != test.X$costs_bin)
+
+erate
+
+})
+
+suppressWarnings({
+
+erates = rep(0, 10)
+
+for (i in 1:10) {
+  train.X = hpc_scaled |> filter(fold != i) |> 
+                      select(-c("total_costs", "set", "fold")) |> 
+                      mutate(days2 = total_days^2, salaries2 = salaries^2)
+  test.X = hpc_scaled |> filter(fold == i) |> 
+                      select(-c("total_costs", "set", "fold")) |> 
+                    mutate(days2 = total_days^2, salaries2 = salaries^2)
+
+  logist_model = glm(costs_bin ~ ., data=train.X, family="binomial")
+  
+  pred = round(predict(logist_model, newdata = test.X, type="response"))
+  
+  erates[i] = mean(pred != test.X$costs_bin)
+}
+
+erates
+
+})
 ```
 
 ## LDA
