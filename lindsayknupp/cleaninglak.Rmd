@@ -684,7 +684,7 @@ train <- df_train %>%
 compute_error_knn <- function(train_data, i, neighbors){
   current_train_folds <- filter(train_data, fold != i)
   current_test_fold <- filter(train_data, fold == i)
-  
+
   knn_pred <- knn(
       train = select(current_train_folds, -c(costs_bin,fold)),
       test = select(current_test_fold, -c(costs_bin,fold)),
@@ -692,10 +692,13 @@ compute_error_knn <- function(train_data, i, neighbors){
       k = neighbors,
       prob = TRUE
     )
+  
+  
   error = mean(current_test_fold$costs_bin != knn_pred)
   return (error)
 }
 
+# for fold number = 1,2,3,4,5,6,7,8,9,10 and then avg all the errors together
 kfold_cv_knn <- function(train_data,neighbors, k = 10) {
   error_vec <- map_dbl(1:k, ~compute_error_knn(train, .x,neighbors))
   avg_error <- mean(error_vec)
@@ -774,47 +777,201 @@ test_error_vec[optimal_idx]
 ## LDA
 
 ```{r}
-# sample code for LDA
+set.seed(1)
 
-lda_auto <- MASS::lda(mpg01 ~ cylinders + displacement + horsepower + weight, data = auto_data)
+train = df_train %>%
+  select(-total_costs)
 
-lda_auto_predictions <- predict(lda_auto, newdata = select(test_data, -mpg01))$class
+compute_error_lda <- function(train_data, i){
+  current_train_folds <- filter(train_data, fold != i)
+  current_test_fold <- filter(train_data, fold == i)
+  
+  model_info = tibble(.rows=1)
+  
+  lda_model <- MASS::lda(costs_bin ~ ., data = select(current_train_folds,-fold))
+  lda_pred <- predict(lda_model, newdata = select(current_test_fold, -c(fold,costs_bin)))$class
+  
+  contingency = table(lda_pred,current_test_fold$costs_bin)
+  #           Actual:           
+  #           below   above
+  # Predicted:
+  # below 
+  # above
+  
+  model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+  model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+  model_info$falsepos = 1 - model_info$trueneg
+  model_info$falseneg = 1 - model_info$truepos
 
-test_error2 <- mean(test_data$mpg01 != lda_auto_predictions)
+  #Positive = above median 
+  #Negative = below median 
+  
+  #sensitivity = true positive = prob that hospital correctly identified above median 188/258
+  #specificity = true negative = prob that hospital correctly identified below median 236/251
+  
+  #false positive = prob that hospital get identified above median when it's below median 15/251
+  #false negative = prob that hospital get identified below median when it's above median 70/258
+  
+  model_info$error = mean(current_test_fold$costs_bin != lda_pred)
+  return (model_info)
+}
 
-test_error2
+kfold_cv_lda = map_df(1:10, ~compute_error_lda(train,.x))
+(mean(kfold_cv_lda$error))
+
+# table(c(1,2),c(3,4))
+# table(current_test_fold$costs_bin,lda_pred)
 ```
 
 ## QDA
 
 ```{r}
+set.seed(1)
 
-## sample QDA code
-qda_auto <- MASS::qda(mpg01 ~ 
-                        cylinders + displacement + horsepower + weight, data = df_train)
+train = df_train %>%
+  select(-total_costs)
 
-qda_auto_predictions <- predict(qda_auto, 
-                                newdata = dplyr::select(df_test, -c(mpg01, set)))$class
+compute_error_qda <- function(train_data, i){
+  current_train_folds <- filter(train_data, fold != i)
+  current_test_fold <- filter(train_data, fold == i)
+  
+  model_info = tibble(.rows=1)
+  
+  qda_model <- MASS::qda(costs_bin ~ ., data = select(current_train_folds,-fold))
+  qda_pred <- predict(qda_model, newdata = select(current_test_fold, -c(fold,costs_bin)))$class
+  
+  contingency = table(qda_pred,current_test_fold$costs_bin)
+  #           Actual:           
+  #           below   above
+  # Predicted:
+  # below 
+  # above
+  
+  model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+  model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+  model_info$falsepos = 1 - model_info$trueneg
+  model_info$falseneg = 1 - model_info$truepos
 
-test_error2 <- mean(df_test$mpg01 != qda_auto_predictions)
+  #Positive = above median 
+  #Negative = below median 
+  
+  #sensitivity = true positive = prob that hospital correctly identified above median 188/258
+  #specificity = true negative = prob that hospital correctly identified below median 236/251
+  
+  #false positive = prob that hospital get identified above median when it's below median 15/251
+  #false negative = prob that hospital get identified below median when it's above median 70/258
+  
+  model_info$error = mean(current_test_fold$costs_bin != qda_pred)
+  return (model_info)
+}
 
-test_error2
+kfold_cv_qda = map_df(1:10, ~compute_error_qda(train,.x))
+(mean(kfold_cv_qda$error))
+
+# table(c(1,2),c(3,4))
+# table(current_test_fold$costs_bin,lda_pred)
 ```
 
 ## Naive Bayes (at least two kernels)
 
 ```{r}
+set.seed(1)
 
-# sample code for naive Bayes gaussian
-nb_gaussian <- e1071::naiveBayes(mpg01 ~ 
-                        cylinders + displacement + horsepower + weight, data = df_train)
+train = df_train %>%
+  select(-total_costs)
 
-nb_pred <- predict(nb_gaussian, newdata = dplyr::select(df_test, -c(mpg01, set)))
+compute_error_nb <- function(train_data, i){
+  current_train_folds <- filter(train_data, fold != i)
+  current_test_fold <- filter(train_data, fold == i)
+  
+  model_info = tibble(.rows=1)
+  
+  nb_model <- e1071::naiveBayes(costs_bin ~ ., data = select(current_train_folds,-fold))
+  nb_pred <- predict(nb_model, newdata = select(current_test_fold, -c(fold,costs_bin)))
+  
+  contingency = table(nb_pred,current_test_fold$costs_bin)
+  #           Actual:           
+  #           below   above
+  # Predicted:
+  # below 
+  # above
+  
+  model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+  model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+  model_info$falsepos = 1 - model_info$trueneg
+  model_info$falseneg = 1 - model_info$truepos
 
-test_error_nb <- mean(df_test$mpg01 != nb_pred)
+  #Positive = above median 
+  #Negative = below median 
+  
+  #sensitivity = true positive = prob that hospital correctly identified above median 188/258
+  #specificity = true negative = prob that hospital correctly identified below median 236/251
+  
+  #false positive = prob that hospital get identified above median when it's below median 15/251
+  #false negative = prob that hospital get identified below median when it's above median 70/258
+  
+  model_info$error = mean(current_test_fold$costs_bin != nb_pred)
+  return (model_info)
+}
 
-test_error_nb
+kfold_cv_nb = map_df(1:10, ~compute_error_nb(train,.x))
+(mean(kfold_cv_nb$error))
 ```
+
+2nd kernel 
+```{r}
+set.seed(1)
+
+
+train = df_train %>%
+  select(-total_costs)
+
+compute_error_nb_kde <- function(train_data, i){
+  current_train_folds <- filter(train_data, fold != i)
+  current_test_fold <- filter(train_data, fold == i)
+  
+  current_train_matrix = current_train_folds %>%
+    select(-c(fold,costs_bin)) %>%
+    as.matrix()
+  
+  current_train_matrixy = current_train_folds %>%
+    select(costs_bin) %>%
+    as.matrix()
+  
+  current_test_matrix = current_test_fold %>%
+    select(-c(fold,costs_bin)) %>%
+    as.matrix()
+  
+  model_info = tibble(.rows=1)
+  
+  nb_kde_model <-  naivebayes::nonparametric_naive_bayes(y = as.factor(current_train_matrixy),
+                                       x = current_train_matrix
+    )
+  nb_kde_pred <- predict(nb_kde_model, newdata = current_test_matrix )
+
+  # nb_kde_model <- e1071::naiveBayes(costs_bin ~ ., data = select(current_train_folds,-fold))
+  # nb_kde_pred <- predict(nb_kde_model, newdata = select(current_test_fold, -c(fold,costs_bin)))
+  
+  contingency = table(nb_kde_pred,current_test_fold$costs_bin)
+  #           Actual:           
+  #           below   above
+  # Predicted:
+  # below 
+  # above
+  
+  model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+  model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+  model_info$falsepos = 1 - model_info$trueneg
+  model_info$falseneg = 1 - model_info$truepos
+  model_info$error = mean(current_test_fold$costs_bin != nb_kde_pred)
+  return (model_info)
+}
+
+kfold_cv_nb_kde = map_df(1:10, ~compute_error_nb_kde(train,.x))
+(mean(kfold_cv_nb_kde$error))
+```
+
+
 
 ## Decision Tree (with pruning)
 
