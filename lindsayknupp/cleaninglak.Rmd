@@ -715,14 +715,17 @@ optimal_error_rate
 ## Multiple logistic regression
 
 ```{r}
+set.seed(1)
 
+predictors <- select(df_train, -c(total_costs, costs_bin,fold))
 
-predictors <- select(df_train, -c(total_costs, costs_bin))
+train = df_train %>%
+  select(-c(total_costs))
 
 # model summaries
-map(predictors, ~summary(glm(total_costs ~ .x, data = df_train,family=binomial)))
+# map(predictors, ~summary(glm(costs_bin ~ .x, data = select(train,-fold),family=binomial)))
 
-simple_models <- map(predictors, ~lm(total_costs ~ .x, data = df_train))
+# simple_logistic_models <- map(predictors, ~glm(costs_bin ~ .x, data = select(train,-fold),family=binomial))
 ```
 
 10-fold cv
@@ -732,41 +735,36 @@ simple_models <- map(predictors, ~lm(total_costs ~ .x, data = df_train))
 
 predictor_names <- colnames(predictors)
 
-formulas <- str_c("total_costs", " ~ ", predictor_names)
+formulas <- str_c("costs_bin", " ~ ", predictor_names)
 
-
-train_data = df_train
-
-formula = formulas[1]
-
-i = 1
-
-compute_MSEP_lm <- function(train_data, formula, i){
+compute_MSEP_glm <- function(train_data, formula, i){
   current_train_folds <- filter(train_data, fold != i)
   current_test_fold <- filter(train_data, fold == i)
     
-  mod <- lm(formula, data = current_train_folds)
-  pred <- predict(mod, newdata = select( current_test_fold, -c(total_costs, costs_bin) ) )
+  mod <- glm(formula, data = select(current_train_folds,-fold),family = binomial)
+  pred <- predict(mod, newdata = select( current_test_fold, -c(fold,costs_bin) ) )
     
-  MSEP <- mean( (current_test_fold$total_costs - pred) ^ 2 )
+  MSEP <- mean( (current_test_fold$costs_bin - pred) ^ 2 )
   return(MSEP)
 }
 
-#compute_MSEP_lm(train_data, formula, i)
-
-kfold_cv_lm <- function(train_data, formula, k = 10){
+kfold_cv_glm <- function(train_data, formula, k = 10){
   
-  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_lm(train_data, formula, .x))
+  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_glm(train_data, formula, .x))
   avg_MSEP <- mean(MSEP_vec)
   return(avg_MSEP)
-  
 }
 
-kfold_cv_lm(train_data, formula)
-
-test_error_vec <- map_dbl( formulas, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
-
+test_error_vec <- map_dbl( formulas, ~kfold_cv_lm(train, formula = .x, k = 10) )
 test_error_vec
+
+optimal_idx = which(test_error_vec == min(test_error_vec))
+formulas[optimal_idx]
+test_error_vec[optimal_idx]
+```
+
+```{r}
+
 ```
 
 
