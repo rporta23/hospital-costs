@@ -674,19 +674,101 @@ mean((pcr.pred- test$total_costs)^2)
 ## KNN
 
 ```{r}
-# sample knn code
+library(class)
 
-knn_pred <- 
-    knn(
-      train = select(df_train, -c(total_cost, costs_bin)),
-      test = select(df_test, -c(total_cost, costs_bin)),
-      cl = df_train$costs_bin,
-      k = k,
+set.seed(1)
+
+train <- df_train %>%
+  select(-c(total_costs))
+
+compute_error_knn <- function(train_data, i, neighbors){
+  current_train_folds <- filter(train_data, fold != i)
+  current_test_fold <- filter(train_data, fold == i)
+  
+  knn_pred <- knn(
+      train = select(current_train_folds, -c(costs_bin,fold)),
+      test = select(current_test_fold, -c(costs_bin,fold)),
+      cl = current_train_folds$costs_bin,
+      k = neighbors,
       prob = TRUE
     )
+  error = mean(current_test_fold$costs_bin != knn_pred)
+  return (error)
+}
+
+kfold_cv_knn <- function(train_data,neighbors, k = 10) {
+  error_vec <- map_dbl(1:k, ~compute_error_knn(train, .x,neighbors))
+  avg_error <- mean(error_vec)
+  return(avg_error)
+}
+
+neighbors <- 1:100 
+knn_error_rates = map_dbl(neighbors, ~kfold_cv_knn(train,neighbors = .x))
+
+optimal_n <- which(knn_error_rates == min(knn_error_rates))
+optimal_error_rate <- knn_error_rates[optimal_n]
+
+optimal_n
+optimal_error_rate
 ```
 
 ## Multiple logistic regression
+
+```{r}
+
+
+predictors <- select(df_train, -c(total_costs, costs_bin))
+
+# model summaries
+map(predictors, ~summary(glm(total_costs ~ .x, data = df_train,family=binomial)))
+
+simple_models <- map(predictors, ~lm(total_costs ~ .x, data = df_train))
+```
+
+10-fold cv
+
+```{r}
+# Estimate with k-fold:
+
+predictor_names <- colnames(predictors)
+
+formulas <- str_c("total_costs", " ~ ", predictor_names)
+
+
+train_data = df_train
+
+formula = formulas[1]
+
+i = 1
+
+compute_MSEP_lm <- function(train_data, formula, i){
+  current_train_folds <- filter(train_data, fold != i)
+  current_test_fold <- filter(train_data, fold == i)
+    
+  mod <- lm(formula, data = current_train_folds)
+  pred <- predict(mod, newdata = select( current_test_fold, -c(total_costs, costs_bin) ) )
+    
+  MSEP <- mean( (current_test_fold$total_costs - pred) ^ 2 )
+  return(MSEP)
+}
+
+#compute_MSEP_lm(train_data, formula, i)
+
+kfold_cv_lm <- function(train_data, formula, k = 10){
+  
+  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_lm(train_data, formula, .x))
+  avg_MSEP <- mean(MSEP_vec)
+  return(avg_MSEP)
+  
+}
+
+kfold_cv_lm(train_data, formula)
+
+test_error_vec <- map_dbl( formulas, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+
+test_error_vec
+```
+
 
 -   Add polynomial terms or transformations of some of the predictors
 -   Add at least two interaction terms that make sense to you
