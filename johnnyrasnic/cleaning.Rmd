@@ -218,9 +218,6 @@ n_test = n - n_train
 
 hpc_dummies$set = "Train"
 hpc_dummies$set[sample(n, n_test, replace = FALSE)] = "Test"
-  
-df_train = hpc_dummies |>  filter(set == "Train") |> select(-set)
-df_test = hpc_dummies |> filter(set == "Test") |> select(-set)
 ```
 
 # 10-fold split
@@ -231,6 +228,19 @@ folds = floor(seq(1,11, length.out=nrow(hpc_dummies)+1))[1:nrow(hpc_dummies)]
 folds = sample(folds, length(folds))
 
 hpc_dummies$fold = folds
+```
+
+# Normalize quantitative variables
+
+```{r}
+hpc_quant = hpc_dummies |> select(-c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, costs_bin, rural, set, fold))
+
+hpc_qual = hpc_dummies |> select(c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, costs_bin, rural, set, fold))
+
+hpc_scaled = as_tibble(scale(hpc_quant) |> cbind(hpc_qual))
+
+df_train = hpc_scaled|>  filter(set == "Train") |> select(-c(set, fold))
+df_test = hpc_scaled |> filter(set == "Test") |> select(-c(set, fold))
 ```
 
 # For all methods:
@@ -255,11 +265,11 @@ simple_models = map(predictors, ~lm(total_costs ~ .x, data = df_train))
 
 ```{r}
 
-coefficients_df = hpc_dummies |> select(-c(total_costs, costs_bin, set, fold)) |> mutate(across(everything(), as.numeric))
+coefficients_df = hpc_scaled |> select(-c(total_costs, costs_bin, set, fold)) |> mutate(across(everything(), as.numeric))
 MSE_df = coefficients_df[1:10,]
 
 for (i in 1:10) {
-  df_train_i = hpc_dummies |> filter(fold == i) |> select(-c(fold, set))
+  df_train_i = hpc_scaled |> filter(fold == i) |> select(-c(fold, set))
   predictors = select(df_train_i, -c(total_costs, costs_bin))
   model = map(predictors, ~lm(total_costs ~ .x, data = df_train_i))
   for (j in colnames(predictors)) {
@@ -324,7 +334,23 @@ for (i in 1:10) {
 
 ```{r}
 library(leaps)
-best_subset = regsubsets(total_costs ~ ., data = hpc_dummies[,-c("costs_bin", "set")])
+
+
+for (i in 1:10) {
+  train.X = hpc_scaled |> filter(fold != i) |> select(-c(costs_bin, set, fold)) 
+  best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X))
+  summ = summary(best_subset)
+  for (j in 1:ncol(train.X)-1) {
+    selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][j,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ)[-1][k])}
+    }
+    train.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=train.X)
+  }
+}
 summary(best_subset)
 ```
 
@@ -332,7 +358,7 @@ summary(best_subset)
 
 ```{r}
 library(leaps)
-best_subset = regsubsets(total_costs ~ ., data = hpc_dummies[,-c("costs_bin", "set", "fold")], method="forward")
+best_subset = regsubsets(total_costs ~ ., data = train.X, method="forward", nvmax = ncol(train.X)-1)
 summary(best_subset)
 ```
 
@@ -340,7 +366,7 @@ summary(best_subset)
 
 ```{r}
 library(leaps)
-best_subset = regsubsets(total_costs ~ ., data = hpc_dummies[,-c("costs_bin", "set", "fold")], method="backward")
+best_subset = regsubsets(total_costs ~ ., data = train.X, method="backward", nvmax = ncol(train.X)-1)
 summary(best_subset)
 ```
 
@@ -350,20 +376,24 @@ summary(best_subset)
 
 ```{r}
 library(glmnet)
-x = scale(model.matrix(total_costs ~ ., data = hpc_dummies[,-c("costs_bin", "set", "fold")])[ , -1])
+train.X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
+x = scale(model.matrix(total_costs ~ ., data = train.X)[ , -1])
 
 lambda_grid = 10 ^ seq(10, -2, length = 100)
 ridge_reg = cv.glmnet(x, hpc_dummies$total_costs, alpha = 0, type.measure = "mse", lambda = lambda_grid, nfolds=10)
 lambda = ridge_reg$lambda.min
 
 ridge_model = glmnet(x, hpc_dummies$total_costs,alpha = 0, lambda = lambda, nfolds=10)
+
+coef(ridge_model)
 ```
 
 ## Lasso (find the best tuning parameter using cross-validation)
 
 ```{r}
 library(glmnet)
-x = scale(model.matrix(total_costs ~ ., data = hpc_dummies[,-c("costs_bin", "set", "fold")])[ , -1])
+train.X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
+x = scale(model.matrix(total_costs ~ ., data = train.X)[ , -1])
 
 lambda_grid = 10 ^ seq(10, -2, length = 100)
 lasso_reg = cv.glmnet(x, hpc_dummies$total_costs, alpha = 1, type.measure = "mse", lambda = lambda_grid, nfolds=10)
@@ -387,8 +417,8 @@ mean((pred - test.X$total_costs)^2)
 erates = rep(0,10)
 
 for (i in 1:10) {
-  train.X = hpc_dummies |> filter(fold != i) |> select(-c(set,fold,costs_bin))
-  test.X = hpc_dummies |> filter(fold == i) |> select(-c(set,fold,costs_bin))
+  train.X = hpc_scaled |> filter(fold != i) |> select(-c(set,fold,costs_bin))
+  test.X = hpc_scaled |> filter(fold == i) |> select(-c(set,fold,costs_bin))
 
 pcr_model = pcr(total_costs ~ ., data = train.X)
 
