@@ -972,7 +972,6 @@ kfold_cv_nb_kde = map_df(1:10, ~compute_error_nb_kde(train,.x))
 ```
 
 
-
 ## Decision Tree (with pruning)
 
 ## Bagging (with variable importance)
