@@ -210,7 +210,6 @@ compute_MSEP_lm <- function(train_data, formula, i){
   return(MSEP)
 }
 
-#compute_MSEP_lm(train_data, formula, i)
 
 kfold_cv_lm <- function(train_data, formula, k = 10){
   
@@ -292,18 +291,98 @@ nvmax <- 12
 
 
 ```{r}
-regfit_best <- regsubsets(total_costs ~ ., data = train_data, nvmax = nvmax)
+regfit_best <- regsubsets(total_costs ~ ., data = select(train_data, -fold),
+                          nvmax = nvmax)
 summary_regfit <- summary(regfit_best)
 summary_regfit
 ```
+
+10-fold CV to choose best model:
+
+```{r}
+response <- "total_costs"
+m <- summary_regfit$which[,-1]
+predictor_names <- colnames(predictors)
+#colnames(m) <- predictor_names
+rhs <- map_chr(1:12, ~str_c(predictor_names[m[.x, ]], collapse = " + "))
+formulas <- str_c(response, " ~ ", rhs)
+
+cv_error_vec <- map_dbl( formulas, ~kfold_cv_lm(train_data, formula = .x, k = 10) )
+cv_error_vec
+
+optimal_size <- which(cv_error_vec == min(cv_error_vec))
+optimal_size
+
+cv_error <- cv_error_vec[optimal_size]
+cv_error
+```
+
+Optimal Model Size: 6
+
+Summary of Best Model:
+
+```{r}
+best_formula <- formulas[optimal_size]
+mod_best <- lm(best_formula, train_data)
+summary(mod_best)
+```
+
+
+Test Error:
+
+```{r}
+test_error <- compute_MSEP_test(best_formula, train_data, test_data)
+
+test_error
+```
+
 
 ## Forward Stepwise
 
 ```{r}
 # Forward stepwise selection -----
-regfit_fwd <- regsubsets(total_costs ~ ., data = train_data, nvmax = nvmax, method = "forward")
+regfit_fwd <- regsubsets(total_costs ~ ., data = select(train_data, -fold),
+                         nvmax = nvmax, method = "forward")
 summary_regfit <- summary(regfit_fwd)
 summary_regfit
+```
+
+10-fold CV to choose best model:
+
+```{r}
+response <- "total_costs"
+m <- summary_regfit$which[,-1]
+predictor_names <- colnames(predictors)
+#colnames(m) <- predictor_names
+rhs <- map_chr(1:12, ~str_c(predictor_names[m[.x, ]], collapse = " + "))
+formulas <- str_c(response, " ~ ", rhs)
+
+cv_error_vec <- map_dbl( formulas, ~kfold_cv_lm(train_data, formula = .x, k = 10) )
+cv_error_vec
+
+optimal_size <- which(cv_error_vec == min(cv_error_vec))
+optimal_size
+
+cv_error <- cv_error_vec[optimal_size]
+cv_error
+```
+
+Optimal Model Size: 6
+
+Summary of Best Model:
+
+```{r}
+best_formula <- formulas[optimal_size]
+mod_best <- lm(best_formula, train_data)
+summary(mod_best)
+```
+
+Test Error:
+
+```{r}
+test_error <- compute_MSEP_test(best_formula, train_data, test_data)
+
+test_error
 ```
 
 
@@ -311,23 +390,85 @@ summary_regfit
 
 ```{r}
 # Backward stepwise selection -----
-regfit_bwd <- regsubsets(total_costs ~ ., data = train_data, nvmax = nvmax, method = "backward")
+regfit_bwd <- regsubsets(total_costs ~ ., 
+                         data = select(train_data, -fold), 
+                         nvmax = nvmax, 
+                         method = "backward"
+                         )
 summary_regfit <- summary(regfit_bwd)
 summary_regfit
 ```
 
+10-fold CV to choose best model:
 
-(For the above 3 methods, determine which model of a given size is best by comparing the 10-fold cross validation estimate of the test error.) ***
+```{r}
+response <- "total_costs"
+m <- summary_regfit$which[,-1]
+predictor_names <- colnames(predictors)
+#colnames(m) <- predictor_names
+rhs <- map_chr(1:12, ~str_c(predictor_names[m[.x, ]], collapse = " + "))
+formulas <- str_c(response, " ~ ", rhs)
+
+cv_error_vec <- map_dbl( formulas, ~kfold_cv_lm(train_data, formula = .x, k = 10) )
+cv_error_vec
+
+optimal_size <- which(cv_error_vec == min(cv_error_vec))
+optimal_size
+
+cv_error <- cv_error_vec[optimal_size]
+cv_error
+```
+
+Optimal Model Size: 6
+
+Summary of Best Model:
+
+```{r}
+best_formula <- formulas[optimal_size]
+mod_best <- lm(best_formula, train_data)
+summary(mod_best)
+```
+
+Test Error:
+
+```{r}
+test_error <- compute_MSEP_test(best_formula, train_data, test_data)
+
+test_error
+```
+
+(For the above 3 methods, determine which model of a given size is best by comparing the 10-fold cross validation estimate of the test error.) 
 
 ## Ridge regression (find the best tuning parameter using cross-validation)
 
 ```{r}
 # scale predictors
-x_train <- scale(model.matrix(total_costs ~ ., data = train_data)[ , -1])
-y_train <- train_data$total_costs
 
-x_test <- scale(model.matrix(total_costs ~ ., data = test_data)[ , -1])
-y_test <- test_data$total_costs
+quant_predictors_train <- train_data |> 
+  select(-c(control_bin_Governmental, control_bin_Proprietary, 
+            provider_bin_Specialized, fold)) |> 
+  scale()
+
+qual_predictors_train <- train_data |> 
+  select(control_bin_Governmental, control_bin_Proprietary,
+         provider_bin_Specialized, fold) 
+
+hpc_scaled_train <- cbind(quant_predictors_train, qual_predictors_train) 
+
+quant_predictors_test <- test_data |> 
+  select(-c(control_bin_Governmental, control_bin_Proprietary, provider_bin_Specialized)) |> 
+  scale()
+
+qual_predictors_test <- test_data |> 
+  select(control_bin_Governmental, control_bin_Proprietary, provider_bin_Specialized) 
+
+hpc_scaled_test <- cbind(quant_predictors_test, qual_predictors_test)
+
+x_train <- model.matrix(total_costs ~ . - fold, data = hpc_scaled_train)[ , -1]
+y_train <- hpc_scaled_train$total_costs
+
+x_test <- model.matrix(total_costs ~ ., data = hpc_scaled_test)[ , -1]
+y_test <- hpc_scaled_test$total_costs
 ```
 
 
@@ -351,18 +492,51 @@ lambda_min <- cv_ridge$lambda.min
 ```
 
 ```{r}
-ridge_reg <- glmnet(x_train, y_train, alpha = 0, lambda = cv_ridge$lambda.min)
+ridge_reg <- glmnet(x_train, y_train, alpha = 0, lambda = lambda_min)
 coef(ridge_reg)
 ```
 
 ```{r}
 pred_ridge <- predict(ridge_reg, newx = x_test)
 
-error_ridge <- mean( (test_data$total_costs - pred_ridge) ^ 2 )
+error_ridge <- mean( (hpc_scaled_test$total_costs - pred_ridge) ^ 2 )
 
 error_ridge
 ```
 
+10-fold CV:
+
+```{r}
+compute_MSEP_ridge <- function(train_data, lambda, alpha, i){
+  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
+  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
+  
+  x_train <- model.matrix(total_costs ~ ., data = current_train_folds)[ , -1]
+  y_train <- current_train_folds$total_costs
+
+  x_test <- model.matrix(total_costs ~ ., data = current_test_fold)[ , -1]
+  y_test <- current_test_fold$total_costs
+    
+  ridge_reg <- glmnet(x_train, y_train, alpha = alpha, lambda = lambda)
+  pred_ridge <- predict(ridge_reg, newx = x_test)
+    
+  MSEP <- mean( (current_test_fold$total_costs - pred_ridge) ^ 2 )
+  return(MSEP)
+}
+
+#compute_MSEP_lm(train_data, formula, i)
+
+kfold_cv_ridge <- function(train_data, lambda, alpha, k = 10){
+  
+  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_ridge(train_data, lambda, alpha, .x))
+  avg_MSEP <- mean(MSEP_vec)
+  return(avg_MSEP)
+  
+}
+
+cv_error_ridge <- kfold_cv_ridge(hpc_scaled_train, lambda_min, alpha = 0)
+cv_error_ridge
+```
 
 
 ## Lasso (find the best tuning parameter using cross-validation)
@@ -377,42 +551,50 @@ lambda_grid <- 10 ^ seq(10, -2, length = 100)
 # 10-fold cross validation to choose tuning parameter
 cv_lasso <- 
   cv.glmnet(
-    x,
-    y,
+    x_train,
+    y_train,
     alpha = 1,
     lambda = lambda_grid,
     type.measure = "mse",
     nfolds = 10        # Set the number of folds to n to get LOOCV
     )
 
-cv_lasso$lambda.min
+lambda_min <- cv_lasso$lambda.min
+lambda_min
 ```
 
 
 ```{r}
 # fit lasso model with optimal tuning parameter
-lasso_bestlambda <- glmnet(x, y, alpha = 1, lambda = cv_lasso$lambda.min)
+lasso_bestlambda <- glmnet(x_train, y_train, alpha = 1, lambda = lambda_min)
 coef(lasso_bestlambda)
 ```
 
 ```{r}
 pred_lasso <- predict(lasso_bestlambda, newx = x_test)
 
-error_lasso <- mean( (test_data$total_costs - pred_lasso) ^ 2 )
+error_lasso <- mean( (hpc_scaled_test$total_costs - pred_lasso) ^ 2 )
 
 error_lasso
+```
+
+10-fold CV:
+
+```{r}
+cv_error_lasso <- kfold_cv_ridge(hpc_scaled_train, lambda_min, alpha = 1)
+cv_error_lasso
 ```
 
 
 ## Principal Components Regression (PCR)
 
-```{r}
-scaled_df_train <- bind_cols(total_costs = y_train, x_train)
-scaled_df_test <- bind_cols(total_costs = y_test, x_test)
-```
 
 ```{r}
-pcr_fit <- pcr(total_costs ~ ., data = scaled_df_train, validation = "CV", segments = 10)
+pcr_fit <- pcr(total_costs ~ ., 
+               data = select(hpc_scaled_train, -fold),
+               validation = "CV", 
+               segments = 10
+               )
 summary(pcr_fit)
 ```
 
@@ -421,12 +603,46 @@ validationplot(pcr_fit, val.type = "MSEP")
 ```
 
 ```{r}
-pred_test <- predict(pcr_fit, scaled_df_test, ncomp = 8)
+pred_test <- predict(pcr_fit, hpc_scaled_test, ncomp = 5)
 
-test_error = mean( (scaled_df_test$total_costs - pred_test)^2 )
+test_error = mean( (hpc_scaled_test$total_costs - pred_test)^2 )
 
 test_error
 ```
+
+10-fold CV:
+
+```{r}
+compute_MSEP_pcr <- function(train_data, i){
+  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
+  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
+  
+  pcr_fit <- pcr(total_costs ~ ., 
+               data = current_train_folds,
+               validation = "CV", 
+               segments = 10
+               )
+  
+  pred <- predict(pcr_fit, current_test_fold, ncomp = 5)
+    
+  MSEP <- mean( (current_test_fold$total_costs - pred) ^ 2 )
+  return(MSEP)
+}
+
+#compute_MSEP_lm(train_data, formula, i)
+
+kfold_cv_pcr <- function(train_data, k = 10){
+  
+  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_pcr(train_data, .x))
+  avg_MSEP <- mean(MSEP_vec)
+  return(avg_MSEP)
+  
+}
+
+cv_error_pcr <- kfold_cv_pcr(hpc_scaled_train)
+cv_error_pcr
+```
+
 
 # Qualitative Outcome Analyses
 
@@ -485,7 +701,7 @@ cv_error_rate_optimal_c <- min(cv_error_rates)
 cv_error_rate_optimal_c
 ```
 
-Fit model with optimal number of nearest neighbors, c = 20:
+Fit model with optimal number of nearest neighbors, c = 17:
 
 ```{r}
 set.seed(1)
