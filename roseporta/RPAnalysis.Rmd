@@ -259,16 +259,29 @@ summary(mod_mlr)
 
 ```{r}
 
-cv_test_error <- kfold_cv_lm(train_data, formula)
+cv_error_lm <- kfold_cv_lm(train_data, formula)
 
-cv_test_error
+cv_error_lm
 ```
 
 ```{r}
-test_error <- compute_MSEP_test(formula, train_data, df_test)
+test_error_lm <- compute_MSEP_test(formula, train_data, df_test)
 
-test_error
+test_error_lm
 ```
+
+## Multiple linear regression with interactions and transformations: ** NA coefficients
+
+```{r}
+formula <- 
+as.formula("total_costs ~ . + poly(total_days, 2, raw = TRUE) + poly(salaries, 2, raw = TRUE) + fte_employees_on_payroll*total_income + fte_employees_on_payroll*provider_bin_Specialized")
+
+mod_mlr <- lm(total_costs ~ . + poly(total_days, 2) + poly(salaries, 2) + fte_employees_on_payroll*total_income + fte_employees_on_payroll*provider_bin_Specialized, data = select(train_data, -fold) )
+
+summary(mod_mlr)
+
+```
+
 
 
 ## Regression Tree (with pruning)
@@ -313,8 +326,8 @@ cv_error_vec
 optimal_size <- which(cv_error_vec == min(cv_error_vec))
 optimal_size
 
-cv_error <- cv_error_vec[optimal_size]
-cv_error
+cv_error_bsub <- cv_error_vec[optimal_size]
+cv_error_bsub
 ```
 
 Optimal Model Size: 6
@@ -331,9 +344,9 @@ summary(mod_best)
 Test Error:
 
 ```{r}
-test_error <- compute_MSEP_test(best_formula, train_data, test_data)
+test_error_bsub <- compute_MSEP_test(best_formula, train_data, test_data)
 
-test_error
+test_error_bsub
 ```
 
 
@@ -363,8 +376,8 @@ cv_error_vec
 optimal_size <- which(cv_error_vec == min(cv_error_vec))
 optimal_size
 
-cv_error <- cv_error_vec[optimal_size]
-cv_error
+cv_error_fwd <- cv_error_vec[optimal_size]
+cv_error_fwd
 ```
 
 Optimal Model Size: 6
@@ -380,9 +393,9 @@ summary(mod_best)
 Test Error:
 
 ```{r}
-test_error <- compute_MSEP_test(best_formula, train_data, test_data)
+test_error_fwd <- compute_MSEP_test(best_formula, train_data, test_data)
 
-test_error
+test_error_fwd
 ```
 
 
@@ -415,8 +428,8 @@ cv_error_vec
 optimal_size <- which(cv_error_vec == min(cv_error_vec))
 optimal_size
 
-cv_error <- cv_error_vec[optimal_size]
-cv_error
+cv_error_bwd <- cv_error_vec[optimal_size]
+cv_error_bwd
 ```
 
 Optimal Model Size: 6
@@ -432,9 +445,9 @@ summary(mod_best)
 Test Error:
 
 ```{r}
-test_error <- compute_MSEP_test(best_formula, train_data, test_data)
+test_error_bwd <- compute_MSEP_test(best_formula, train_data, test_data)
 
-test_error
+test_error_bwd
 ```
 
 (For the above 3 methods, determine which model of a given size is best by comparing the 10-fold cross validation estimate of the test error.) 
@@ -499,9 +512,9 @@ coef(ridge_reg)
 ```{r}
 pred_ridge <- predict(ridge_reg, newx = x_test)
 
-error_ridge <- mean( (hpc_scaled_test$total_costs - pred_ridge) ^ 2 )
+test_error_ridge <- mean( (hpc_scaled_test$total_costs - pred_ridge) ^ 2 )
 
-error_ridge
+test_error_ridge
 ```
 
 10-fold CV:
@@ -573,9 +586,9 @@ coef(lasso_bestlambda)
 ```{r}
 pred_lasso <- predict(lasso_bestlambda, newx = x_test)
 
-error_lasso <- mean( (hpc_scaled_test$total_costs - pred_lasso) ^ 2 )
+test_error_lasso <- mean( (hpc_scaled_test$total_costs - pred_lasso) ^ 2 )
 
-error_lasso
+test_error_lasso
 ```
 
 10-fold CV:
@@ -605,9 +618,9 @@ validationplot(pcr_fit, val.type = "MSEP")
 ```{r}
 pred_test <- predict(pcr_fit, hpc_scaled_test, ncomp = 5)
 
-test_error = mean( (hpc_scaled_test$total_costs - pred_test)^2 )
+test_error_pcr = mean( (hpc_scaled_test$total_costs - pred_test)^2 )
 
-test_error
+test_error_pcr
 ```
 
 10-fold CV:
@@ -641,6 +654,24 @@ kfold_cv_pcr <- function(train_data, k = 10){
 
 cv_error_pcr <- kfold_cv_pcr(hpc_scaled_train)
 cv_error_pcr
+```
+
+
+# Summary Table Quant Outcome
+
+```{r}
+method <- c("Linear Regression (Main Effects)",
+            "Best Subset", "Forward Stepwise", "Backward Stepwise", "Ridge", "Lasso", "PCR")
+
+cv_error <- c(cv_error_lm, cv_error_bsub, cv_error_fwd, 
+              cv_error_bwd, cv_error_ridge, cv_error_lasso, cv_error_pcr)
+
+test_error <- c(test_error_lm, test_error_bsub, test_error_fwd, 
+              test_error_bwd, test_error_ridge, test_error_lasso, test_error_pcr)
+
+error_summary <- tibble(method, cv_error, test_error)
+
+knitr::kable(error_summary)
 ```
 
 
@@ -699,6 +730,8 @@ optimal_c
 
 cv_error_rate_optimal_c <- min(cv_error_rates)
 cv_error_rate_optimal_c
+
+cv_error_knn <- cv_error_rate_optimal_c
 ```
 
 Fit model with optimal number of nearest neighbors, c = 17:
@@ -715,9 +748,9 @@ knn_pred <-
       prob = TRUE
     )
 
-test_error <- mean(df_test$costs_bin != knn_pred)
+test_error_knn <- mean(df_test$costs_bin != knn_pred)
 
-test_error
+test_error_knn
 
 ```
 
@@ -747,9 +780,9 @@ log_pred <- predict( mod_mlogr,
 
 pred_class <- ifelse(log_pred >= 0.5, 1, 0)
 
-test_error <- mean(df_test$costs_bin != pred_class)
+test_error_logistic <- mean(df_test$costs_bin != pred_class)
 
-test_error
+test_error_logistic
 ```
 
 ```{r}
@@ -787,7 +820,7 @@ kfold_cv_logistic <- function(train_data, formula, k = 10){
   
 }
 
-kfold_cv_logistic(train_data, formula)
+cv_error_logistic <- kfold_cv_logistic(train_data, formula)
 ```
 
 
@@ -800,9 +833,9 @@ mod_lda <- MASS::lda(costs_bin ~ ., data = select(train_data, -fold))
 
 lda_pred <- predict( mod_lda, newdata = select( df_test, -c(costs_bin, total_costs) ) )$class
 
-test_error <- mean(df_test$costs_bin != lda_pred)
+test_error_lda <- mean(df_test$costs_bin != lda_pred)
 
-test_error
+test_error_lda
 ```
 
 10-fold CV: 
@@ -844,9 +877,9 @@ mod_qda <- MASS::qda(costs_bin ~ ., data = select(train_data, -fold))
 
 qda_pred <- predict( mod_qda, newdata = select( df_test, -c(costs_bin, total_costs) ) )$class
 
-test_error <- mean(df_test$costs_bin != qda_pred)
+test_error_qda <- mean(df_test$costs_bin != qda_pred)
 
-test_error
+test_error_qda
 ```
 
 10-fold CV: 
@@ -942,9 +975,9 @@ nb_KDE <-
 
 nb_kde_pred <- predict(nb_KDE, newdata = test_matrix )
 
-test_error_nb_kde_pred <- mean(df_test$costs_bin != nb_kde_pred)
+test_error_nb_kde <- mean(df_test$costs_bin != nb_kde_pred)
 
-test_error_nb_kde_pred
+test_error_nb_kde
 
 ```
 
@@ -1005,6 +1038,23 @@ cv_error_nb_kde
 ## Neural Network
 
 ## Calculate True/False Positive/Negative rates for each method
+
+# Summary Table Qualitative Outcome
+
+```{r}
+method <- c("Logistic Regression (Main Effects)", "KNN",
+            "LDA", "QDA", "Naive Bayes- Gaussian", "Naive Bayes- KDE")
+
+cv_error <- c(cv_error_logistic, cv_error_knn, cv_error_lda, cv_error_qda, 
+              cv_error_nb, cv_error_nb_kde)
+
+test_error <- c(test_error_logistic, test_error_knn, test_error_lda, test_error_qda, 
+              test_error_nb, test_error_nb_kde)
+
+error_summary <- tibble(method, cv_error, test_error)
+
+knitr::kable(error_summary)
+```
 
 # Bootstrap CI
 
