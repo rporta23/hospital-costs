@@ -125,6 +125,21 @@ hpc_dummies <- hpc_normalize |>
   select(where(is.numeric))
 ```
 
+```{r}
+ 
+quant_scaled <- hpc_dummies |> 
+  select(-c(control_bin_Governmental, control_bin_Proprietary, 
+            provider_bin_Specialized, costs_bin)) |> 
+  scale()
+
+qual <- hpc_dummies |> 
+  select(c(control_bin_Governmental, control_bin_Proprietary, 
+            provider_bin_Specialized, costs_bin)) 
+
+hpc_scaled <- cbind(quant_scaled, qual) 
+```
+
+
 # Train-test Split
 
 ```{r}
@@ -132,16 +147,17 @@ set.seed(1)
 
 train_prop <- 0.9
 
-n <- nrow(hpc_dummies)
+n <- nrow(hpc_scaled)
 n_train <- train_prop*n
 n_test <- n - n_train
 
-hpc_dummies$set <- "Train"
-hpc_dummies$set[sample(n, n_test, replace = FALSE)] <- "Test"
+hpc_scaled$set <- "Train"
+hpc_scaled$set[sample(n, n_test, replace = FALSE)] <- "Test"
   
-df_train <- hpc_dummies |>  filter(set == "Train") |> select(-set)
-df_test <- hpc_dummies |> filter(set == "Test") |> select(-set)
+df_train <- hpc_scaled |>  filter(set == "Train") |> select(-set)
+df_test <- hpc_scaled |> filter(set == "Test") |> select(-set)
 ```
+
 
 # For all methods:
 
@@ -467,33 +483,11 @@ test_error_bwd
 ## Ridge regression (find the best tuning parameter using cross-validation)
 
 ```{r}
-# scale predictors
+x_train <- model.matrix(total_costs ~ . - fold, data = train_data)[ , -1]
+y_train <- train_data$total_costs
 
-quant_predictors_train <- train_data |> 
-  select(-c(control_bin_Governmental, control_bin_Proprietary, 
-            provider_bin_Specialized, fold)) |> 
-  scale()
-
-qual_predictors_train <- train_data |> 
-  select(control_bin_Governmental, control_bin_Proprietary,
-         provider_bin_Specialized, fold) 
-
-hpc_scaled_train <- cbind(quant_predictors_train, qual_predictors_train) 
-
-quant_predictors_test <- test_data |> 
-  select(-c(control_bin_Governmental, control_bin_Proprietary, provider_bin_Specialized)) |> 
-  scale()
-
-qual_predictors_test <- test_data |> 
-  select(control_bin_Governmental, control_bin_Proprietary, provider_bin_Specialized) 
-
-hpc_scaled_test <- cbind(quant_predictors_test, qual_predictors_test)
-
-x_train <- model.matrix(total_costs ~ . - fold, data = hpc_scaled_train)[ , -1]
-y_train <- hpc_scaled_train$total_costs
-
-x_test <- model.matrix(total_costs ~ ., data = hpc_scaled_test)[ , -1]
-y_test <- hpc_scaled_test$total_costs
+x_test <- model.matrix(total_costs ~ ., data = test_data)[ , -1]
+y_test <- test_data$total_costs
 ```
 
 
@@ -524,7 +518,7 @@ coef(ridge_reg)
 ```{r}
 pred_ridge <- predict(ridge_reg, newx = x_test)
 
-test_error_ridge <- mean( (hpc_scaled_test$total_costs - pred_ridge) ^ 2 )
+test_error_ridge <- mean( (y_test - pred_ridge) ^ 2 )
 
 test_error_ridge
 ```
@@ -559,7 +553,7 @@ kfold_cv_ridge <- function(train_data, lambda, alpha, k = 10){
   
 }
 
-cv_error_ridge <- kfold_cv_ridge(hpc_scaled_train, lambda_min, alpha = 0)
+cv_error_ridge <- kfold_cv_ridge(train_data, lambda_min, alpha = 0)
 cv_error_ridge
 ```
 
@@ -598,7 +592,7 @@ coef(lasso_bestlambda)
 ```{r}
 pred_lasso <- predict(lasso_bestlambda, newx = x_test)
 
-test_error_lasso <- mean( (hpc_scaled_test$total_costs - pred_lasso) ^ 2 )
+test_error_lasso <- mean( (y_test - pred_lasso) ^ 2 )
 
 test_error_lasso
 ```
@@ -606,7 +600,7 @@ test_error_lasso
 10-fold CV:
 
 ```{r}
-cv_error_lasso <- kfold_cv_ridge(hpc_scaled_train, lambda_min, alpha = 1)
+cv_error_lasso <- kfold_cv_ridge(train_data, lambda_min, alpha = 1)
 cv_error_lasso
 ```
 
@@ -616,7 +610,7 @@ cv_error_lasso
 
 ```{r}
 pcr_fit <- pcr(total_costs ~ ., 
-               data = select(hpc_scaled_train, -fold),
+               data = select(train_data, -fold),
                validation = "CV", 
                segments = 10
                )
@@ -628,9 +622,9 @@ validationplot(pcr_fit, val.type = "MSEP")
 ```
 
 ```{r}
-pred_test <- predict(pcr_fit, hpc_scaled_test, ncomp = 5)
+pred_test <- predict(pcr_fit, test_data, ncomp = 5)
 
-test_error_pcr = mean( (hpc_scaled_test$total_costs - pred_test)^2 )
+test_error_pcr = mean( (test_data$total_costs - pred_test)^2 )
 
 test_error_pcr
 ```
@@ -664,7 +658,7 @@ kfold_cv_pcr <- function(train_data, k = 10){
   
 }
 
-cv_error_pcr <- kfold_cv_pcr(hpc_scaled_train)
+cv_error_pcr <- kfold_cv_pcr(train_data)
 cv_error_pcr
 ```
 
@@ -692,18 +686,24 @@ knitr::kable(error_summary)
 
 ```{r}
 confusion_matrix <- function(pred, true_values) {
-  true_positives <- sum(pred == 1 && true_values == 1)
-  false_positives <- sum(pred == 1 && true_values == 0)
-  true_negatives <- sum(pred == 0 && true_values == 0)
-  false_negatives <- sum(pred == 0 && true_values == 1)
+  true_positives <- sum( (pred == 1) & (true_values == 1) )
+  false_positives <- sum( (pred == 1) & (true_values == 0) )
+  true_negatives <- sum( (pred == 0) & (true_values == 0) )
+  false_negatives <- sum( (pred == 0) & (true_values == 1) )
   
   all_negatives <- sum(true_values == 0)
   all_positives <- sum(true_values == 1)
   
-  fpr = false_positives/all_negatives
-  fnr = false_negatives/all_positives
+  fpr <- false_positives/all_negatives
+  fnr <- false_negatives/all_positives
+  tpr <- true_positives/all_positives
+  tnr <- true_negatives/all_negatives
   
-  return(c(fpr, fnr))
+  result <- c(fpr, fnr, tpr, tnr)
+  
+  names(result) <- c("False Positive Rate", "False Negative Rate", "True Positive Rate", "True Negative Rate")
+  
+  return(result)
 }
 ```
 
@@ -779,18 +779,19 @@ knn_pred <-
       prob = TRUE
     )
 
-test_error_knn <- mean(df_test$costs_bin != knn_pred)
+test_error_knn <- mean(test_data$costs_bin != knn_pred)
 
 test_error_knn
 
 ```
 
 ```{r}
-confusion_matrix(knn_pred, df_test$costs_bin)
+cm_knn <- confusion_matrix(knn_pred, test_data$costs_bin)
+cm_knn
 ```
 
 
-## Multiple logistic regression ** issue with cv
+## Multiple logistic regression ** issue 0/1 probabilities
 
 -   Add polynomial terms or transformations of some of the predictors
 -   Add at least two interaction terms that make sense to you
@@ -858,6 +859,12 @@ kfold_cv_logistic <- function(train_data, formula, k = 10){
 cv_error_logistic <- kfold_cv_logistic(train_data, formula)
 ```
 
+```{r}
+cm_logistic <- confusion_matrix(pred_class, test_data$costs_bin)
+cm_logistic
+```
+
+
 ## Multiple logistic regression with Transformations and Interactions
 
 ```{r}
@@ -892,6 +899,10 @@ cv_error_logistic2 <- kfold_cv_logistic(train_data, formula)
 cv_error_logistic2
 ```
 
+```{r}
+cm_logistic2 <- confusion_matrix(pred_class, test_data$costs_bin)
+cm_logistic2
+```
 
 
 ## LDA
@@ -939,6 +950,12 @@ cv_error_lda <- kfold_cv_lda(train_data, formula)
 cv_error_lda
 ```
 
+```{r}
+cm_lda <- confusion_matrix(lda_pred, test_data$costs_bin)
+cm_lda
+```
+
+
 
 ## QDA
 
@@ -983,6 +1000,12 @@ cv_error_qda <- kfold_cv_qda(train_data, formula)
 cv_error_qda
 ```
 
+```{r}
+cm_qda <- confusion_matrix(qda_pred, test_data$costs_bin)
+cm_qda
+```
+
+
 
 ## Naive Bayes (at least two kernels)
 
@@ -1026,6 +1049,11 @@ kfold_cv_nb <- function(train_data, formula, k = 10){
 cv_error_nb <- kfold_cv_nb(train_data, formula)
 
 cv_error_nb
+```
+
+```{r}
+cm_nb <- confusion_matrix(nb_pred, test_data$costs_bin)
+cm_nb
 ```
 
 
@@ -1094,6 +1122,11 @@ cv_error_nb_kde <- kfold_cv_nb_kde(train_data, formula)
 cv_error_nb_kde
 ```
 
+```{r}
+cm_nb_kde <- confusion_matrix(nb_kde_pred, test_data$costs_bin)
+cm_nb_kde
+```
+
 # Variable Selection- Qualitative Outcome
 
 ## Forward Stepwise
@@ -1133,6 +1166,11 @@ cv_error_fwd_bin <- kfold_cv_logistic(train_data, fwd_formula)
 cv_error_fwd_bin
 ```
 
+```{r}
+cm_fwd_bin <- confusion_matrix(pred_class, test_data$costs_bin)
+cm_fwd_bin
+```
+
 
 ## Backward Stepwise
 
@@ -1164,37 +1202,21 @@ cv_error_bwd_bin <- kfold_cv_logistic(train_data, bwd_formula)
 cv_error_bwd_bin
 ```
 
+```{r}
+cm_bwd_bin <- confusion_matrix(pred_class, test_data$costs_bin)
+cm_bwd_bin
+```
+
 
 ## Ridge regression (find the best tuning parameter using cross-validation)
 
 ```{r}
-# scale predictors
 
-quant_predictors_train <- train_data |> 
-  select(-c(control_bin_Governmental, control_bin_Proprietary, 
-            provider_bin_Specialized, fold, costs_bin)) |> 
-  scale()
+x_train <- model.matrix(costs_bin ~ . - fold, data = train_data)[ , -1]
+y_train <- train_data$costs_bin
 
-qual_predictors_train <- train_data |> 
-  select(control_bin_Governmental, control_bin_Proprietary,
-         provider_bin_Specialized, costs_bin, fold) 
-
-hpc_scaled_train <- cbind(quant_predictors_train, qual_predictors_train) 
-
-quant_predictors_test <- test_data |> 
-  select(-c(control_bin_Governmental, control_bin_Proprietary, provider_bin_Specialized, costs_bin)) |> 
-  scale()
-
-qual_predictors_test <- test_data |> 
-  select(control_bin_Governmental, control_bin_Proprietary, provider_bin_Specialized, costs_bin) 
-
-hpc_scaled_test <- cbind(quant_predictors_test, qual_predictors_test)
-
-x_train <- model.matrix(costs_bin ~ . - fold, data = hpc_scaled_train)[ , -1]
-y_train <- hpc_scaled_train$costs_bin
-
-x_test <- model.matrix(costs_bin ~ ., data = hpc_scaled_test)[ , -1]
-y_test <- hpc_scaled_test$costs_bin
+x_test <- model.matrix(costs_bin ~ ., data = test_data)[ , -1]
+y_test <- test_data$costs_bin
 ```
 
 
@@ -1227,7 +1249,7 @@ pred_ridge <- predict(ridge_reg, newx = x_test, type = "response")
 
 pred_class <- ifelse(pred_ridge >= 0.5, 1, 0)
 
-test_error_ridge_bin <- mean( hpc_scaled_test$costs_bin !=  pred_class )
+test_error_ridge_bin <- mean( y_test !=  pred_class )
 
 test_error_ridge_bin
 ```
@@ -1264,10 +1286,14 @@ kfold_cv_ridge_bin <- function(train_data, lambda, alpha, k = 10){
   
 }
 
-cv_error_ridge_bin <- kfold_cv_ridge_bin(hpc_scaled_train, lambda_min, alpha = 0)
+cv_error_ridge_bin <- kfold_cv_ridge_bin(train_data, lambda_min, alpha = 0)
 cv_error_ridge_bin
 ```
 
+```{r}
+cm_ridge_bin <- confusion_matrix(pred_class, test_data$costs_bin)
+cm_ridge_bin
+```
 
 ## Lasso (find the best tuning parameter using cross-validation)
 
@@ -1305,7 +1331,7 @@ pred_lasso <- predict(lasso_bestlambda, newx = x_test, type = "response")
 
 pred_class <- ifelse(pred_lasso >= 0.5, 1, 0)
 
-test_error_lasso_bin <- mean( hpc_scaled_test$costs_bin !=  pred_class )
+test_error_lasso_bin <- mean( y_test !=  pred_class )
 
 test_error_lasso_bin
 ```
@@ -1313,8 +1339,13 @@ test_error_lasso_bin
 10-fold CV:
 
 ```{r}
-cv_error_lasso_bin <- kfold_cv_ridge_bin(hpc_scaled_train, lambda_min, alpha = 1)
+cv_error_lasso_bin <- kfold_cv_ridge_bin(train_data, lambda_min, alpha = 1)
 cv_error_lasso_bin
+```
+
+```{r}
+cm_lasso_bin <- confusion_matrix(pred_class, test_data$costs_bin)
+cm_lasso_bin
 ```
 
 
@@ -1335,6 +1366,16 @@ cv_error_lasso_bin
 # Summary Table Qualitative Outcome
 
 ```{r}
+cm_summary <- bind_rows(cm_logistic, cm_logistic2, cm_fwd_bin, 
+              cm_bwd_bin, cm_ridge_bin, cm_lasso_bin,
+              cm_knn, cm_lda, cm_qda, 
+              cm_nb, cm_nb_kde)
+
+#cm_summary
+```
+
+
+```{r}
 method <- c("Logistic Regression (Main Effects)", "Logistic Regression (Transformations)",
             "Forward Stepwise", "Backward Stepwise", "Ridge", "Lasso", "KNN",
             "LDA", "QDA", "Naive Bayes- Gaussian", "Naive Bayes- KDE")
@@ -1349,7 +1390,9 @@ test_error <- c(test_error_logistic, test_error_logistic2, test_error_fwd_bin,
               test_error_knn, test_error_lda, test_error_qda, 
               test_error_nb, test_error_nb_kde)
 
-error_summary <- tibble(method, cv_error, test_error)
+error_summary <- tibble(method, cv_error, test_error) |> 
+  bind_cols(cm_summary) |> 
+  mutate_if(is.numeric, ~round(.x, 2))
 
 knitr::kable(error_summary)
 ```
