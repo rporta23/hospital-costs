@@ -169,20 +169,19 @@ summary(hpc_clean)
 Pairs plot:
 
 ```{r}
-hpc_dummies %>%
-  select(-set) %>%
-  pairs()
-pairs(hpc_dummies)
+# hpc_dummies %>%
+#   pairs()
+# pairs(hpc_dummies)
 
 # Try pairs plot with log of total costs
-data_pairs <- hpc_dummies |> 
-  select(-c(rural, costs_bin, control_bin_Governmental,
-            control_bin_Voluntary, provider_bin_Specialized,
-            set)
-         ) |> 
-  mutate(total_costs = log(total_costs))
-
-pairs(data_pairs)
+# data_pairs <- hpc_dummies |> 
+#   select(-c(rural, costs_bin, control_bin_Governmental,
+#             control_bin_Voluntary, provider_bin_Specialized,
+#             set)
+#          ) |> 
+#   mutate(total_costs = log(total_costs))
+# 
+# pairs(data_pairs)
 ```
 
 -   very high pairwise positive collinearity between:
@@ -693,7 +692,6 @@ compute_error_knn <- function(train_data, i, neighbors){
       prob = TRUE
     )
   
-  
   error = mean(current_test_fold$costs_bin != knn_pred)
   return (error)
 }
@@ -715,7 +713,41 @@ optimal_n
 optimal_error_rate
 ```
 
-## Multiple logistic regression
+### Compare true test error rate 
+```{r}
+set.seed(1)
+
+train <- df_train %>%
+  select(-c(total_costs,fold))
+
+test <- df_test %>%
+  select(-c(total_costs))
+
+model_info = tibble(.rows=1)
+
+knn_pred <- knn(
+      train = train,
+      test = test,
+      cl = train$costs_bin,
+      k = 17,
+      prob = TRUE
+    )
+  
+contingency = table(knn_pred,test$costs_bin)
+
+model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+model_info$falsepos = 1 - model_info$trueneg
+model_info$falseneg = 1 - model_info$truepos
+
+model_info$error = mean(test$costs_bin != knn_pred)
+
+# error = mean(test$costs_bin != knn_pred)
+model_info
+```
+
+
+## Simple/Multiple logistic regression
 
 ```{r}
 set.seed(1)
@@ -735,44 +767,27 @@ train = df_train %>%
 
 ```{r}
 # Estimate with k-fold:
-
-predictor_names <- colnames(predictors)
-
-formulas <- str_c("costs_bin", " ~ ", predictor_names)
-
 compute_MSEP_glm <- function(train_data, formula, i){
   current_train_folds <- filter(train_data, fold != i)
   current_test_fold <- filter(train_data, fold == i)
     
   mod <- glm(formula, data = select(current_train_folds,-fold),family = binomial)
-  pred <- predict(mod, newdata = select( current_test_fold, -c(fold,costs_bin) ) )
+  pred <- round(predict(mod, newdata = select( current_test_fold, -c(fold,costs_bin) ),type = "response" ))
     
-  MSEP <- mean( (current_test_fold$costs_bin - pred) ^ 2 )
-  return(MSEP)
+  error_rate <- mean( (current_test_fold$costs_bin != pred) )
+  return(error_rate)
 }
 
-kfold_cv_glm <- function(train_data, formula, k = 10){
-  
-  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_glm(train_data, formula, .x))
-  avg_MSEP <- mean(MSEP_vec)
-  return(avg_MSEP)
-}
+formula = c("costs_bin ~ .")
+error_rates <- map_dbl(1:k, ~compute_MSEP_glm(train_data, formula, .x))
 
-test_error_vec <- map_dbl( formulas, ~kfold_cv_lm(train, formula = .x, k = 10) )
+test_error_vec <- map_dbl( formulas, ~kfold_cv_glm(train, formula = .x, k = 10) )
 test_error_vec
-
-optimal_idx = which(test_error_vec == min(test_error_vec))
-formulas[optimal_idx]
-test_error_vec[optimal_idx]
 ```
-
-```{r}
-
-```
-
 
 -   Add polynomial terms or transformations of some of the predictors
 -   Add at least two interaction terms that make sense to you
+
 
 ## LDA
 
