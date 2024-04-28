@@ -302,12 +302,10 @@ erates = rep(0,10)
 
 for (i in 1:10) {
   train.X = hpc_scaled |> filter(fold != i) |> 
-    select(-c("costs_bin", "fold", "set")) |> 
-    mutate(beds2 = number_of_beds^2)
+    select(-c("costs_bin", "fold", "set"))
   
   test.X = hpc_scaled |> filter(fold == i) |> 
-    select(-c("costs_bin", "fold", "set")) |> 
-    mutate(beds2 = number_of_beds^2)
+    select(-c("costs_bin", "fold", "set"))
   
   lin_model = lm(total_costs ~ ., data=train.X)
   
@@ -340,11 +338,11 @@ erates
     for (i in 1:10) {
       train.X = hpc_scaled |> filter(fold != i) |> 
         select(-c("costs_bin", "fold", "set")) |> 
-        mutate(beds2 = number_of_beds^2)
+        mutate(days2 = total_days^2, salaries2 = salaries^2)
       
       test.X = hpc_scaled |> filter(fold == i) |> 
         select(-c("costs_bin", "fold", "set")) |> 
-        mutate(beds2 = number_of_beds^2)
+        mutate(days2 = total_days^2, salaries2 = salaries^2)
       
       lin_model = lm(total_costs ~ ., data=train.X)
       
@@ -375,13 +373,13 @@ erates
     erates = rep(0,10)
 
     for (i in 1:10) {
-      train.X = hpc_dummies |> filter(fold != i) |> 
+      train.X = hpc_scaled |> filter(fold != i) |> 
         select(-c("costs_bin", "fold", "set")) |> 
-        mutate(beds2 = number_of_beds^2)
+        mutate(employees_x_total_income = fte_employees_on_payroll * total_income, specialized_employees_interaction = provider_bin_Specialized * fte_employees_on_payroll)
       
-      test.X = hpc_dummies |> filter(fold == i) |> 
+      test.X = hpc_scaled |> filter(fold == i) |> 
         select(-c("costs_bin", "fold", "set")) |> 
-        mutate(beds2 = number_of_beds^2)
+        mutate(employees_x_total_income = fte_employees_on_payroll * total_income, specialized_employees_interaction = provider_bin_Specialized * fte_employees_on_payroll)
       
       lin_model = lm(total_costs ~ ., data=train.X)
       
@@ -392,6 +390,43 @@ erates
 
     erates
     ```
+
+Both transformations and interaction terms present
+
+```{r}
+train.X = df_train |> select(-c("costs_bin")) |> 
+                      mutate(employees_x_total_income = fte_employees_on_payroll * total_income, specialized_employees_interaction = provider_bin_Specialized * fte_employees_on_payroll, days2 = total_days^2, salaries2 = salaries^2)
+test.X = df_test |> select(-c("costs_bin")) |> 
+                    mutate(employees_x_total_income = fte_employees_on_payroll * total_income, specialized_employees_interaction = provider_bin_Specialized * fte_employees_on_payroll, days2 = total_days^2, salaries2 = salaries^2)
+
+lin_model = lm(total_costs ~ ., data=train.X)
+
+summary(lin_model)
+
+pred = predict(lin_model, newdata = test.X)
+
+mean((pred - test.X$total_costs)^2)
+
+erates = rep(0,10)
+
+for (i in 1:10) {
+  train.X = hpc_scaled |> filter(fold != i) |> 
+    select(-c("costs_bin", "fold", "set")) |> 
+    mutate(employees_x_total_income = fte_employees_on_payroll * total_income, specialized_employees_interaction = provider_bin_Specialized * fte_employees_on_payroll, days2 = total_days^2, salaries2 = salaries^2)
+  
+  test.X = hpc_scaled |> filter(fold == i) |> 
+    select(-c("costs_bin", "fold", "set")) |> 
+    mutate(employees_x_total_income = fte_employees_on_payroll * total_income, specialized_employees_interaction = provider_bin_Specialized * fte_employees_on_payroll, days2 = total_days^2, salaries2 = salaries^2)
+  
+  lin_model = lm(total_costs ~ ., data=train.X)
+  
+  pred = predict(lin_model, newdata = test.X)
+  
+  erates[i] = mean((pred - test.X$total_costs)^2)
+}
+
+erates
+```
 
 ## Regression Tree (with pruning)
 
@@ -508,6 +543,8 @@ which(erates == min(erates))
 
 ## Ridge regression (find the best tuning parameter using cross-validation)
 
+### Quantitative
+
 ```{r}
 library(glmnet)
 train.X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
@@ -522,7 +559,25 @@ ridge_model = glmnet(x, hpc_dummies$total_costs,alpha = 0, lambda = lambda, nfol
 coef(ridge_model)
 ```
 
+### Qualitative
+
+```{r}
+library(glmnet)
+train.X = hpc_scaled |> select(-c("total_costs", "set", "fold"))
+x = scale(model.matrix(costs_bin ~ ., data = train.X)[ , -1])
+
+lambda_grid = 10 ^ seq(10, -2, length = 100)
+ridge_reg = cv.glmnet(x, hpc_scaled$costs_bin, alpha = 0, family="binomial", lambda = lambda_grid, nfolds=10)
+lambda = ridge_reg$lambda.min
+
+ridge_model = glmnet(x, hpc_scaled$costs_bin,alpha = 0, lambda = lambda, nfolds=10)
+
+coef(ridge_model)
+```
+
 ## Lasso (find the best tuning parameter using cross-validation)
+
+### Quantitative
 
 ```{r}
 library(glmnet)
@@ -530,7 +585,30 @@ train.X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
 x = scale(model.matrix(total_costs ~ ., data = train.X)[ , -1])
 
 lambda_grid = 10 ^ seq(10, -2, length = 100)
-lasso_reg = cv.glmnet(x, hpc_dummies$total_costs, alpha = 1, type.measure = "mse", lambda = lambda_grid, nfolds=10)
+lasso_reg = cv.glmnet(x, hpc_scaled$total_costs, alpha = 1, type.measure = "mse", lambda = lambda_grid, nfolds=10)
+
+lambda = lasso_reg$lambda.min
+
+lasso_model = glmnet(x, hpc_scaled$total_costs, alpha = 1, lambda = lambda, nfolds=10)
+
+coef(lasso_model)
+```
+
+### Qualitative
+
+```{r}
+library(glmnet)
+train.X = hpc_scaled |> select(-c("total_costs", "set", "fold"))
+x = scale(model.matrix(costs_bin ~ ., data = train.X)[ , -1])
+
+lambda_grid = 10 ^ seq(10, -2, length = 100)
+lasso_reg = cv.glmnet(x, hpc_scaled$costs_bin, alpha = 1, family="binomial", lambda = lambda_grid, nfolds=10)
+
+lambda = lasso_reg$lambda.min
+
+lasso_model = glmnet(x, hpc_scaled$costs_bin, alpha = 1, lambda = lambda, nfolds=10)
+
+coef(lasso_model)
 ```
 
 ## Principal Components Regression (PCR)
@@ -570,8 +648,9 @@ erates
 
 ```{r}
 library(class)
+set.seed(1)
 
-K = 5
+K = 25
 
 erates = rep(0,K)
 
@@ -581,8 +660,6 @@ for (i in 1:K) {
 }
 
 erates = matrix(rep(0, 10*K), nrow = 10, ncol =K)
-
-
 
 for (i in 1:10) {
   for (j in 1:K) {
@@ -625,8 +702,8 @@ suppressWarnings({
 erates = rep(0, 10)
 
 for (i in 1:10) {
-  train.X = hpc_dummies |> filter(fold != i) |> select(-c("total_costs", "set", "fold"))
-  test.X = hpc_dummies |> filter(fold == i) |> select(-c("total_costs", "set", "fold"))
+  train.X = hpc_scaled |> filter(fold != i) |> select(-c("total_costs", "set", "fold"))
+  test.X = hpc_scaled |> filter(fold == i) |> select(-c("total_costs", "set", "fold"))
 
   logist_model = glm(costs_bin ~ ., data=train.X, family="binomial")
   
