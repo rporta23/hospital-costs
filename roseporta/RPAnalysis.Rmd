@@ -274,12 +274,24 @@ test_error_lm
 
 ```{r}
 formula <- 
-as.formula("total_costs ~ . + poly(total_days, 2, raw = TRUE) + poly(salaries, 2, raw = TRUE) + fte_employees_on_payroll*total_income + fte_employees_on_payroll*provider_bin_Specialized")
+as.formula("total_costs ~ . - total_days - salaries + poly(total_days, 2, raw = TRUE) + poly(salaries, 2, raw = TRUE) + fte_employees_on_payroll*total_income + fte_employees_on_payroll*provider_bin_Specialized")
 
-mod_mlr <- lm(total_costs ~ . + poly(total_days, 2) + poly(salaries, 2) + fte_employees_on_payroll*total_income + fte_employees_on_payroll*provider_bin_Specialized, data = select(train_data, -fold) )
+mod_mlr <- lm(formula, data = select(train_data, -fold) )
 
 summary(mod_mlr)
 
+```
+
+```{r}
+cv_error_lm2 <- kfold_cv_lm(train_data, formula)
+
+cv_error_lm2
+```
+
+```{r}
+test_error_lm2 <- compute_MSEP_test(formula, train_data, df_test)
+
+test_error_lm2
 ```
 
 
@@ -660,13 +672,13 @@ cv_error_pcr
 # Summary Table Quant Outcome
 
 ```{r}
-method <- c("Linear Regression (Main Effects)",
+method <- c("Linear Regression (Main Effects)", "Linear Regression (Transformations)",
             "Best Subset", "Forward Stepwise", "Backward Stepwise", "Ridge", "Lasso", "PCR")
 
-cv_error <- c(cv_error_lm, cv_error_bsub, cv_error_fwd, 
+cv_error <- c(cv_error_lm, cv_error_lm2, cv_error_bsub, cv_error_fwd, 
               cv_error_bwd, cv_error_ridge, cv_error_lasso, cv_error_pcr)
 
-test_error <- c(test_error_lm, test_error_bsub, test_error_fwd, 
+test_error <- c(test_error_lm, test_error_lm2, test_error_bsub, test_error_fwd, 
               test_error_bwd, test_error_ridge, test_error_lasso, test_error_pcr)
 
 error_summary <- tibble(method, cv_error, test_error)
@@ -676,6 +688,25 @@ knitr::kable(error_summary)
 
 
 # Qualitative Outcome Analyses
+
+
+```{r}
+confusion_matrix <- function(pred, true_values) {
+  true_positives <- sum(pred == 1 && true_values == 1)
+  false_positives <- sum(pred == 1 && true_values == 0)
+  true_negatives <- sum(pred == 0 && true_values == 0)
+  false_negatives <- sum(pred == 0 && true_values == 1)
+  
+  all_negatives <- sum(true_values == 0)
+  all_positives <- sum(true_values == 1)
+  
+  fpr = false_positives/all_negatives
+  fnr = false_negatives/all_positives
+  
+  return(c(fpr, fnr))
+}
+```
+
 
 ```{r}
 train_data <- df_train |> select(-c(total_costs))
@@ -722,11 +753,11 @@ kfold_cv_knn <- function(train_data, k = 10, c){
 
 c_values <- 1:100
 
-cv_error_rates <- map_dbl(c_values, ~kfold_cv_knn(train_data, k = 10, c = .x))
+# cv_error_rates <- map_dbl(c_values, ~kfold_cv_knn(train_data, k = 10, c = .x))
 
-optimal_c <- which(cv_error_rates == min(cv_error_rates))
+# optimal_c <- which(cv_error_rates == min(cv_error_rates))
 
-optimal_c
+optimal_c <- 17
 
 cv_error_rate_optimal_c <- min(cv_error_rates)
 cv_error_rate_optimal_c
@@ -752,6 +783,10 @@ test_error_knn <- mean(df_test$costs_bin != knn_pred)
 
 test_error_knn
 
+```
+
+```{r}
+confusion_matrix(knn_pred, df_test$costs_bin)
 ```
 
 
@@ -823,11 +858,47 @@ kfold_cv_logistic <- function(train_data, formula, k = 10){
 cv_error_logistic <- kfold_cv_logistic(train_data, formula)
 ```
 
+## Multiple logistic regression with Transformations and Interactions
+
+```{r}
+formula <- 
+as.formula("costs_bin ~ . - total_days - salaries + poly(total_days, 2, raw = TRUE) + poly(salaries, 2, raw = TRUE) + fte_employees_on_payroll*total_income + fte_employees_on_payroll*provider_bin_Specialized")
+
+mod_mlogr <- glm(formula, 
+                 data = train_data |> select(-fold), 
+                 family = binomial(link = "logit")
+                 )
+
+summary(mod_mlogr)
+
+```
+
+
+```{r}
+log_pred <- predict( mod_mlogr, 
+                     newdata = select( test_data, -c(costs_bin) ), 
+                     type = "response" 
+                     )
+
+pred_class <- ifelse(log_pred >= 0.5, 1, 0)
+
+test_error_logistic2 <- mean(df_test$costs_bin != pred_class)
+
+test_error_logistic2
+```
+
+```{r}
+cv_error_logistic2 <- kfold_cv_logistic(train_data, formula)
+cv_error_logistic2
+```
+
 
 
 ## LDA
 
 ```{r}
+
+formula <- as.formula("costs_bin ~ .")
 
 mod_lda <- MASS::lda(costs_bin ~ ., data = select(train_data, -fold))
 
@@ -1023,6 +1094,228 @@ cv_error_nb_kde <- kfold_cv_nb_kde(train_data, formula)
 cv_error_nb_kde
 ```
 
+# Variable Selection- Qualitative Outcome
+
+## Forward Stepwise
+
+```{r}
+rhs <- str_c(predictor_names, collapse = "+")
+
+formula <- as.formula(str_c("costs_bin ~", rhs))
+
+mod_null <- glm(costs_bin ~ 1, 
+                 data = train_data |> select(-fold), 
+                 family = binomial(link = "logit")
+                 )
+
+m.forward <- step(mod_null, scope = formula, direction = "forward")
+
+summary(m.forward)
+```
+
+```{r}
+fwd_pred <- predict( m.forward, 
+                     newdata = select( test_data, -c(costs_bin) ), 
+                     type = "response" 
+                     )
+
+pred_class <- ifelse(fwd_pred >= 0.5, 1, 0)
+
+test_error_fwd_bin <- mean(df_test$costs_bin != pred_class)
+
+test_error_fwd_bin
+```
+
+```{r}
+fwd_formula <- m.forward$formula
+
+cv_error_fwd_bin <- kfold_cv_logistic(train_data, fwd_formula)
+cv_error_fwd_bin
+```
+
+
+## Backward Stepwise
+
+```{r}
+mod_full <- update(mod_null, formula)
+
+m.backward <- step(mod_full, direction = "backward")
+
+summary(m.backward)
+```
+
+```{r}
+bwd_pred <- predict( m.backward, 
+                     newdata = select( test_data, -c(costs_bin) ), 
+                     type = "response" 
+                     )
+
+pred_class <- ifelse(bwd_pred >= 0.5, 1, 0)
+
+test_error_bwd_bin <- mean(df_test$costs_bin != pred_class)
+
+test_error_bwd_bin
+```
+
+```{r}
+bwd_formula <- m.backward$formula
+
+cv_error_bwd_bin <- kfold_cv_logistic(train_data, bwd_formula)
+cv_error_bwd_bin
+```
+
+
+## Ridge regression (find the best tuning parameter using cross-validation)
+
+```{r}
+# scale predictors
+
+quant_predictors_train <- train_data |> 
+  select(-c(control_bin_Governmental, control_bin_Proprietary, 
+            provider_bin_Specialized, fold, costs_bin)) |> 
+  scale()
+
+qual_predictors_train <- train_data |> 
+  select(control_bin_Governmental, control_bin_Proprietary,
+         provider_bin_Specialized, costs_bin, fold) 
+
+hpc_scaled_train <- cbind(quant_predictors_train, qual_predictors_train) 
+
+quant_predictors_test <- test_data |> 
+  select(-c(control_bin_Governmental, control_bin_Proprietary, provider_bin_Specialized, costs_bin)) |> 
+  scale()
+
+qual_predictors_test <- test_data |> 
+  select(control_bin_Governmental, control_bin_Proprietary, provider_bin_Specialized, costs_bin) 
+
+hpc_scaled_test <- cbind(quant_predictors_test, qual_predictors_test)
+
+x_train <- model.matrix(costs_bin ~ . - fold, data = hpc_scaled_train)[ , -1]
+y_train <- hpc_scaled_train$costs_bin
+
+x_test <- model.matrix(costs_bin ~ ., data = hpc_scaled_test)[ , -1]
+y_test <- hpc_scaled_test$costs_bin
+```
+
+
+```{r}
+set.seed(1)
+
+lambda_grid <- 10 ^ seq(10, -2, length = 100)
+cv_ridge <- 
+  cv.glmnet(
+    x_train,
+    y_train,
+    alpha = 0,
+    lambda = lambda_grid,
+    family = 'binomial',
+    nfolds = 10        
+    )
+
+cv_ridge$lambda.min
+
+lambda_min <- cv_ridge$lambda.min
+```
+
+```{r}
+ridge_reg <- glmnet(x_train, y_train, alpha = 0, family = 'binomial', lambda = lambda_min)
+coef(ridge_reg)
+```
+
+```{r}
+pred_ridge <- predict(ridge_reg, newx = x_test, type = "response")
+
+pred_class <- ifelse(pred_ridge >= 0.5, 1, 0)
+
+test_error_ridge_bin <- mean( hpc_scaled_test$costs_bin !=  pred_class )
+
+test_error_ridge_bin
+```
+
+10-fold CV:
+
+```{r}
+compute_error_ridge_bin <- function(train_data, lambda, alpha, i){
+  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
+  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
+  
+  x_train <- model.matrix(costs_bin ~ ., data = current_train_folds)[ , -1]
+  y_train <- current_train_folds$costs_bin
+
+  x_test <- model.matrix(costs_bin ~ ., data = current_test_fold)[ , -1]
+  y_test <- current_test_fold$costs_bin
+    
+  ridge_reg <- glmnet(x_train, y_train, alpha = alpha, family = 'binomial', lambda = lambda)
+  pred_ridge <- predict(ridge_reg, newx = x_test, type = "response")
+  
+  pred_class <- ifelse(pred_ridge >= 0.5, 1, 0)
+    
+  error <- mean( current_test_fold$costs_bin != pred_class ) 
+  return(error)
+}
+
+#compute_MSEP_lm(train_data, formula, i)
+
+kfold_cv_ridge_bin <- function(train_data, lambda, alpha, k = 10){
+  
+  MSEP_vec <- map_dbl(1:k, ~compute_error_ridge_bin(train_data, lambda, alpha, .x))
+  avg_MSEP <- mean(MSEP_vec)
+  return(avg_MSEP)
+  
+}
+
+cv_error_ridge_bin <- kfold_cv_ridge_bin(hpc_scaled_train, lambda_min, alpha = 0)
+cv_error_ridge_bin
+```
+
+
+## Lasso (find the best tuning parameter using cross-validation)
+
+```{r}
+
+set.seed(1)
+
+# fit lasso model
+lambda_grid <- 10 ^ seq(10, -2, length = 100)
+
+# 10-fold cross validation to choose tuning parameter
+cv_lasso <- 
+  cv.glmnet(
+    x_train,
+    y_train,
+    alpha = 1,
+    lambda = lambda_grid,
+    family = 'binomial',
+    nfolds = 10        # Set the number of folds to n to get LOOCV
+    )
+
+lambda_min <- cv_lasso$lambda.min
+lambda_min
+```
+
+
+```{r}
+# fit lasso model with optimal tuning parameter
+lasso_bestlambda <- glmnet(x_train, y_train, alpha = 1, family = 'binomial', lambda = lambda_min)
+coef(lasso_bestlambda)
+```
+
+```{r}
+pred_lasso <- predict(lasso_bestlambda, newx = x_test, type = "response")
+
+pred_class <- ifelse(pred_lasso >= 0.5, 1, 0)
+
+test_error_lasso_bin <- mean( hpc_scaled_test$costs_bin !=  pred_class )
+
+test_error_lasso_bin
+```
+
+10-fold CV:
+
+```{r}
+cv_error_lasso_bin <- kfold_cv_ridge_bin(hpc_scaled_train, lambda_min, alpha = 1)
+cv_error_lasso_bin
+```
 
 
 ## Decision Tree (with pruning)
@@ -1042,13 +1335,18 @@ cv_error_nb_kde
 # Summary Table Qualitative Outcome
 
 ```{r}
-method <- c("Logistic Regression (Main Effects)", "KNN",
+method <- c("Logistic Regression (Main Effects)", "Logistic Regression (Transformations)",
+            "Forward Stepwise", "Backward Stepwise", "Ridge", "Lasso", "KNN",
             "LDA", "QDA", "Naive Bayes- Gaussian", "Naive Bayes- KDE")
 
-cv_error <- c(cv_error_logistic, cv_error_knn, cv_error_lda, cv_error_qda, 
+cv_error <- c(cv_error_logistic, cv_error_logistic2, cv_error_fwd_bin, 
+              cv_error_bwd_bin, cv_error_ridge_bin, cv_error_lasso_bin,
+              cv_error_knn, cv_error_lda, cv_error_qda, 
               cv_error_nb, cv_error_nb_kde)
 
-test_error <- c(test_error_logistic, test_error_knn, test_error_lda, test_error_qda, 
+test_error <- c(test_error_logistic, test_error_logistic2, test_error_fwd_bin, 
+              test_error_bwd_bin, test_error_ridge_bin, test_error_lasso_bin,
+              test_error_knn, test_error_lda, test_error_qda, 
               test_error_nb, test_error_nb_kde)
 
 error_summary <- tibble(method, cv_error, test_error)
