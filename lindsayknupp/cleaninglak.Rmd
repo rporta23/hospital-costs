@@ -940,11 +940,13 @@ kfold_cv_knn <- function(train_data,neighbors, k = 10) {
 neighbors <- 1:100 
 knn_error_rates = map_dbl(neighbors, ~kfold_cv_knn(train,neighbors = .x))
 
-optimal_n <- which(knn_error_rates == min(knn_error_rates))
+optimal_n <- which.min(knn_error_rates)
 optimal_error_rate <- knn_error_rates[optimal_n]
 
 optimal_n
 optimal_error_rate
+
+cv_knn = mean(knn_error_rates)
 ```
 
 ### Compare true test error rate
@@ -961,14 +963,14 @@ test <- df_test %>%
 model_info = tibble(.rows=1)
 
 knn_pred <- knn(
-      train = train,
-      test = test,
+      train = select(train,-costs_bin),
+      test = select(test,-costs_bin),
       cl = train$costs_bin,
-      k = 17,
+      k = optimal_n,
       prob = TRUE
     )
   
-contingency = table(knn_pred,test$costs_bin)
+(contingency = table(knn_pred,test$costs_bin))
 
 model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
 model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
@@ -977,8 +979,13 @@ model_info$falseneg = 1 - model_info$truepos
 
 model_info$error = mean(test$costs_bin != knn_pred)
 
-# error = mean(test$costs_bin != knn_pred)
 model_info
+
+testMSE_knn = model_info$error
+truepos_knn = model_info$truepos
+trueneg_knn = model_info$trueneg
+falsepos_knn = model_info$falsepos
+falseneg_knn = model_info$falseneg
 ```
 
 ## Simple/Multiple logistic regression
@@ -989,6 +996,9 @@ set.seed(1)
 predictors <- select(df_train, -c(total_costs, costs_bin,fold))
 
 train = df_train %>%
+  select(-c(total_costs))
+
+test = df_test %>%
   select(-c(total_costs))
 
 # model summaries
@@ -1013,10 +1023,32 @@ compute_MSEP_glm <- function(train_data, formula, i){
 }
 
 formula = c("costs_bin ~ .")
-error_rates <- map_dbl(1:k, ~compute_MSEP_glm(train_data, formula, .x))
+error_rates <- map_dbl(1:10, ~compute_MSEP_glm(train, formula, .x))
+cv_glm = mean(error_rates)
 
-test_error_vec <- map_dbl( formulas, ~kfold_cv_glm(train, formula = .x, k = 10) )
-test_error_vec
+# test_error_vec <- map_dbl( formulas, ~compute_MSEP_glm(train, formula = .x, i = 10) )
+```
+
+Test error 
+```{r}
+mod <- glm("costs_bin ~ .", data = select(train,-fold),family = binomial)
+pred <- round(predict(mod, newdata = select( test, -c(costs_bin) ),type = "response" ))
+  
+model_info = tibble(.rows=1)
+contingency = table(pred,test$costs_bin)
+
+model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+model_info$falsepos = 1 - model_info$trueneg
+model_info$falseneg = 1 - model_info$truepos
+
+model_info$error_rate <- mean( (test$costs_bin != pred) )
+
+testMSE_glm = model_info$error_rate
+truepos_glm = model_info$truepos
+trueneg_glm = model_info$trueneg
+falsepos_glm = model_info$falsepos
+falseneg_glm = model_info$falseneg
 ```
 
 -   Add polynomial terms or transformations of some of the predictors
@@ -1028,6 +1060,9 @@ test_error_vec
 set.seed(1)
 
 train = df_train %>%
+  select(-total_costs)
+
+test = df_test %>%
   select(-total_costs)
 
 compute_error_lda <- function(train_data, i){
@@ -1065,11 +1100,34 @@ compute_error_lda <- function(train_data, i){
 }
 
 kfold_cv_lda = map_df(1:10, ~compute_error_lda(train,.x))
-(mean(kfold_cv_lda$error))
+cv_lda = (mean(kfold_cv_lda$error))
 
 # table(c(1,2),c(3,4))
 # table(current_test_fold$costs_bin,lda_pred)
 ```
+
+Test error 
+```{r}
+lda_model <- MASS::lda(costs_bin ~ ., data = select(train,-fold))
+lda_pred <- predict(lda_model, newdata = select(test, -c(costs_bin)))$class
+  
+model_info = tibble(.rows=1)
+contingency = table(pred,test$costs_bin)
+
+model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+model_info$falsepos = 1 - model_info$trueneg
+model_info$falseneg = 1 - model_info$truepos
+
+model_info$error_rate <- mean( (test$costs_bin != lda_pred) )
+
+testMSE_lda = model_info$error_rate
+truepos_lda = model_info$truepos
+trueneg_lda = model_info$trueneg
+falsepos_lda = model_info$falsepos
+falseneg_lda = model_info$falseneg
+```
+
 
 ## QDA
 
@@ -1077,6 +1135,9 @@ kfold_cv_lda = map_df(1:10, ~compute_error_lda(train,.x))
 set.seed(1)
 
 train = df_train %>%
+  select(-total_costs)
+
+test = df_test %>%
   select(-total_costs)
 
 compute_error_qda <- function(train_data, i){
@@ -1114,10 +1175,33 @@ compute_error_qda <- function(train_data, i){
 }
 
 kfold_cv_qda = map_df(1:10, ~compute_error_qda(train,.x))
-(mean(kfold_cv_qda$error))
+cv_qda = (mean(kfold_cv_qda$error))
 
 # table(c(1,2),c(3,4))
 # table(current_test_fold$costs_bin,lda_pred)
+```
+
+Test error 
+```{r}
+
+qda_model <- MASS::qda(costs_bin ~ ., data = select(train,-fold))
+qda_pred <- predict(qda_model, newdata = select(test, -c(costs_bin)))$class
+
+model_info = tibble(.rows=1)
+contingency = table(pred,test$costs_bin)
+
+model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+model_info$falsepos = 1 - model_info$trueneg
+model_info$falseneg = 1 - model_info$truepos
+
+model_info$error_rate <- mean( (test$costs_bin != lda_pred) )
+
+testMSE_qda = model_info$error_rate
+truepos_qda = model_info$truepos
+trueneg_qda = model_info$trueneg
+falsepos_qda = model_info$falsepos
+falseneg_qda = model_info$falseneg
 ```
 
 ## Naive Bayes (at least two kernels)
@@ -1126,6 +1210,9 @@ kfold_cv_qda = map_df(1:10, ~compute_error_qda(train,.x))
 set.seed(1)
 
 train = df_train %>%
+  select(-total_costs)
+
+test = df_test %>%
   select(-total_costs)
 
 compute_error_nb <- function(train_data, i){
@@ -1163,7 +1250,29 @@ compute_error_nb <- function(train_data, i){
 }
 
 kfold_cv_nb = map_df(1:10, ~compute_error_nb(train,.x))
-(mean(kfold_cv_nb$error))
+cv_nb = (mean(kfold_cv_nb$error))
+```
+
+Test error 
+```{r}
+nb_model <- e1071::naiveBayes(costs_bin ~ ., data = select(train,-fold))
+nb_pred <- predict(nb_model, newdata = select(test, -c(costs_bin)))
+
+model_info = tibble(.rows=1)
+contingency = table(pred,test$costs_bin)
+
+model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+model_info$falsepos = 1 - model_info$trueneg
+model_info$falseneg = 1 - model_info$truepos
+
+model_info$error_rate <- mean( (test$costs_bin != lda_pred) )
+
+testMSE_nb = model_info$error_rate
+truepos_nb = model_info$truepos
+trueneg_nb = model_info$trueneg
+falsepos_nb = model_info$falsepos
+falseneg_nb = model_info$falseneg
 ```
 
 2nd kernel
@@ -1173,6 +1282,9 @@ set.seed(1)
 
 
 train = df_train %>% 
+  select(-total_costs)
+
+test = df_test %>% 
   select(-total_costs)
 
 compute_error_nb_kde <- function(train_data, i){
@@ -1217,7 +1329,80 @@ compute_error_nb_kde <- function(train_data, i){
 }
 
 kfold_cv_nb_kde = map_df(1:10, ~compute_error_nb_kde(train,.x))
-(mean(kfold_cv_nb_kde$error))
+cv_nb_kde = (mean(kfold_cv_nb_kde$error))
+```
+
+Test error 
+```{r}
+current_train_matrix = train %>%
+  select(-c(fold,costs_bin)) %>%
+  as.matrix()
+
+current_train_matrixy = train %>%
+  select(costs_bin) %>%
+  as.matrix()
+
+current_test_matrix = test %>%
+  select(-c(costs_bin)) %>%
+  as.matrix()
+
+model_info = tibble(.rows=1)
+
+nb_kde_model <-  naivebayes::nonparametric_naive_bayes(y = as.factor(current_train_matrixy),
+                                     x = current_train_matrix
+  )
+nb_kde_pred <- predict(nb_kde_model, newdata = current_test_matrix )
+
+# nb_kde_model <- e1071::naiveBayes(costs_bin ~ ., data = select(current_train_folds,-fold))
+# nb_kde_pred <- predict(nb_kde_model, newdata = select(current_test_fold, -c(fold,costs_bin)))
+
+contingency = table(nb_kde_pred,test$costs_bin)
+#           Actual:           
+#           below   above
+# Predicted:
+# below 
+# above
+
+model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+model_info$falsepos = 1 - model_info$trueneg
+model_info$falseneg = 1 - model_info$truepos
+model_info$error = mean(test$costs_bin != nb_kde_pred)
+
+testMSE_nb_kde = model_info$error
+truepos_nb_kde = model_info$truepos
+trueneg_nb_kde = model_info$trueneg
+falsepos_nb_kde = model_info$falsepos
+falseneg_nb_kde = model_info$falseneg
+```
+
+# Qualitative summary
+```{r}
+
+method <- c("KNN","Multiple Logistic Regression","LDA","QDA","Naive Bayes (Gaussian)",
+            "Naive Bayes (KDE)")
+
+cv_error <- c(cv_knn,cv_glm,cv_lda,cv_qda,cv_nb,cv_nb_kde)
+
+error_rates <- c(testMSE_knn,testMSE_glm,testMSE_lda,testMSE_qda,testMSE_nb,
+                testMSE_nb_kde)
+
+true_pos <- c(truepos_knn,truepos_glm,truepos_lda,truepos_qda,truepos_nb,
+              truepos_nb_kde)
+
+true_neg <- c(trueneg_knn,trueneg_glm,trueneg_lda,trueneg_qda,trueneg_nb,
+              trueneg_nb_kde)
+
+false_pos <- c(falsepos_knn,falsepos_glm,falsepos_lda,falsepos_qda,falsepos_nb,
+              falsepos_nb_kde)
+
+false_neg <- c(falseneg_knn,falseneg_glm,falseneg_lda,falseneg_qda,falseneg_nb,
+              falseneg_nb_kde)
+
+error_summary <- tibble(method,cv_error,error_rates,true_pos,true_neg,
+                        false_pos,false_neg)
+
+knitr::kable(error_summary)
 ```
 
 ## Decision Tree (with pruning)
