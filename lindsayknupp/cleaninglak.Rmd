@@ -769,18 +769,42 @@ testMSE_backward_stepwise = mean(backward_stepwise_cv$testMSE)
 
 ## Ridge regression (find the best tuning parameter using cross-validation)
 
+Compute cv MSEP for both ridge and lasso 
+```{r}
+compute_MSEP_ridge_lasso <- function(train_data,lambda,alpha,i){
+  current_train_folds <- filter(train_data, fold != i)
+  current_test_fold <- filter(train_data, fold == i)
+  
+  train_design_mat = model.matrix(total_costs ~ ., data = select(current_train_folds,-fold))[, -1]
+  test_design_mat = model.matrix(total_costs ~ .,data = select(current_test_fold,-fold))[,-1]
+  
+  trainx <- train_design_mat
+  trainy <- current_train_folds$total_costs
+  
+  testx <- test_design_mat
+  testy <- current_test_fold$total_costs
+    
+  mod <- glmnet(trainx,trainy,alpha=alpha,lambda = lambda)
+  pred <- predict(mod, newx = testx)
+    
+  MSEP <- mean( (testy - pred) ^ 2 )
+  return(MSEP)
+}
+```
+
+
 ```{r}
 library(glmnet)
 
 set.seed(1)
 
 train <- df_train %>%
-  select(-c(costs_bin,fold))
+  select(-c(costs_bin))
 
 test <- df_test %>%
   select(-c(costs_bin))
 
-train_design_mat = model.matrix(total_costs ~ ., data = train)[, -1]
+train_design_mat = model.matrix(total_costs ~ ., data = select(train,-fold))[, -1]
 test_design_mat = model.matrix(total_costs ~ .,data = test)[,-1]
 
 trainx <- train_design_mat
@@ -797,11 +821,11 @@ ridge_reg <- glmnet(trainx, trainy, alpha = 0, lambda = lambda_grid)
 cv.out <- cv.glmnet(trainx, trainy, alpha = 0)
 bestmean <- min(cv.out$cvm) # lowest error 
 bestlambda <- cv.out$lambda[which(cv.out$cvm == bestmean)]
-cv_ridge = mean(cv.out$cvm)
+cv_ridge <- mean(map_dbl(1:10, ~compute_MSEP_ridge_lasso(train,bestlambda,0,.x)))
 
 # Use optimal lambda to find test error 
-optimal_lambda_ridge_reg <- glmnet(x,y,alpha = 0,lambda = bestlambda)
-pred = predict(optimal_lambda_ridge_reg, newx = testx)
+best_lambda_ridge_reg <- glmnet(trainx,trainy,alpha = 0,lambda = bestlambda)
+pred = predict(best_lambda_ridge_reg, newx = testx)
 testMSE_ridge = mean( (pred-testy)^2 )
 ```
 
@@ -813,12 +837,12 @@ library(glmnet)
 set.seed(1)
 
 train <- df_train %>%
-  select(-c(costs_bin,fold))
+  select(-c(costs_bin))
 
 test <- df_test %>%
   select(-c(costs_bin))
 
-train_design_mat = model.matrix(total_costs ~ ., data = train)[, -1]
+train_design_mat = model.matrix(total_costs ~ ., data = select(train,-fold))[, -1]
 test_design_mat = model.matrix(total_costs ~ .,data = test)[,-1]
 
 trainx <- train_design_mat
@@ -835,10 +859,10 @@ lasso_reg <- glmnet(trainx, trainy, alpha = 1, lambda = lambda_grid)
 cv.out <- cv.glmnet(trainx, trainy, alpha = 1)
 bestmean <- min(cv.out$cvm) # lowest error 
 bestlambda <- cv.out$lambda[which(cv.out$cvm == bestmean)]
-cv_lasso = mean(cv.out$cvm)
+cv_lasso <- mean(map_dbl(1:10, ~compute_MSEP_ridge_lasso(train,bestlambda,1,.x)))
 
 # Use optimal lambda to find test error 
-optimal_lambda_lasso_reg <- glmnet(x,y,alpha = 0,lambda = bestlambda)
+optimal_lambda_lasso_reg <- glmnet(trainx,trainy,alpha = 0,lambda = bestlambda)
 pred = predict(optimal_lambda_lasso_reg, newx = testx)
 testMSE_lasso = mean( (pred-testy)^2 )
 
@@ -856,7 +880,7 @@ train <- df_train %>%
 test <- df_test %>%
   select(-c(costs_bin))
 
-pcr.fit <-pcr(total_costs ~ ., data = train, scale = FALSE, validation = "CV",segments = 10)
+pcr.fit <-pcr(total_costs ~ ., data = train, validation = "CV",segments = 10)
 MSEP = MSEP(pcr.fit)
 (which.min(MSEP$val[1,1, ] ))
 cv_pcr = MSEP$val[1,1,]
@@ -864,7 +888,7 @@ cv_pcr = mean(cv_pcr[-1])
 
 validationplot(pcr.fit, val.type = "MSEP")
 
-pcr.pred <-predict(pcr.fit, newx = select(test,-total_costs), ncomp = 12)
+pcr.pred <-predict(pcr.fit, test, ncomp = 5)
 testMSE_pcr = mean((pcr.pred- test$total_costs)^2)
 ```
 
