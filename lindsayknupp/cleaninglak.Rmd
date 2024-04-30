@@ -435,6 +435,78 @@ testMSE_multiple_lm <- compute_testMSE_multiple_lm(train,test)
 
 ## Regression Tree (with pruning)
 
+```{r}
+library(tree)
+
+train = df_train %>%
+  select(-costs_bin)
+
+test = df_test %>%
+  select(-costs_bin)
+
+# Original tree 
+tree.costs = tree(total_costs ~ ., data = select(train,-fold))
+summary(tree.costs)
+plot(tree.costs)
+text(tree.costs)
+# Original errors
+tree.pred = predict(tree.costs,test)
+testerror = mean(  (test$total_costs - tree.pred)^2  )
+
+# Optimal number of nodes
+cv.costs = cv.tree(tree.costs)
+plot(cv.costs$size, cv.costs$dev, type = "b")
+optimalnodes = cv.costs$size[which.min(cv.costs$dev)]
+# Prune tree with optimal number of nodes 
+prune.costs = prune.tree(tree.costs,best=optimalnodes)
+# Compute new errors 
+prune.pred = predict(prune.costs,test)
+testerrorprune = mean(  (test$total_costs - prune.pred)^2  )
+
+
+# Now, fit larger tree with pruning to see if we get better results 
+tree.costs.full = tree(total_costs ~ ., data = select(train,-fold),
+                        control = tree.control(nrow(train), mindev = 0))
+cv.costs.full = cv.tree(tree.costs.full)
+plot(cv.costs.full$size, cv.costs.full$dev, type = "b")
+optimalnodesfull = cv.costs.full$size[which.min(cv.costs.full$dev)]
+
+prune.costs.full = prune.tree(tree.costs.full,best=optimalnodesfull)
+# Compute new errors 
+prune.pred.full = predict(prune.costs.full,test)
+testerrorprunefull = mean(  (test$total_costs - prune.pred.full)^2  )
+```
+Best number of terminal nodes is 8 but that is too large when using individual folds for cross validation error rates. 
+
+k fold CV 
+```{r}
+compute_MSEP_regression_tree <- function(train_data,i){
+    current_train_folds <- filter(train_data, fold != i)
+    current_test_fold <- filter(train_data, fold == i)
+    
+    tree.costs = tree(total_costs ~ ., data = select(current_train_folds,-fold))
+    prune.costs = prune.tree(tree.costs,best = 7)
+    
+    prune.pred = predict(prune.costs,select(current_test_fold,-fold))
+    
+    return (mean((current_test_fold$total_costs - prune.pred)^2) )
+}
+
+cv_regression_tree = mean(map_dbl(1:10,~compute_MSEP_regression_tree(train,.x)))
+
+compute_testMSE_regression_tree <- function(train_data,test_data){
+  
+  tree.costs = tree(total_costs ~ ., data = select(train_data,-fold))
+  prune.costs = prune.tree(tree.costs,best = 7)
+  
+  prune.pred = predict(prune.costs,test_data)
+  
+  return (mean((test_data$total_costs - prune.pred)^2) )
+}
+
+testMSE_regression_tree <- compute_testMSE_regression_tree(train,test)
+```
+
 ## Bagging (with variable importance)
 
 ## Random Forest (with variable importance)
@@ -907,16 +979,16 @@ marginal_summary <- tibble(method,formula, cv_error, test_error)
 
 
 method <- c("Multiple Linear Regression","Best Subset","Forward Stepwise",
-            "Backward Stepwise","Ridge Regression","Lasso","PCR")
+            "Backward Stepwise","Ridge Regression","Lasso","PCR","Regression Trees")
 
-formula <- rep(NA,7)
+formula <- rep(NA,8)
 
 cv_error <- c(cv_multiple_lm,cv_best_subset,cv_forward_stepwise,
-              cv_backward_stepwise,cv_ridge,cv_lasso,cv_pcr)
+              cv_backward_stepwise,cv_ridge,cv_lasso,cv_pcr,cv_regression_tree)
 
 test_error <- c(testMSE_multiple_lm,testMSE_best_subset,testMSE_forward_stepwise,
                 testMSE_backward_stepwise,testMSE_ridge,testMSE_lasso,
-                testMSE_pcr)
+                testMSE_pcr,testMSE_regression_tree)
 
 rest_of_methods <- tibble(method,formula,cv_error,test_error)
 
