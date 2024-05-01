@@ -14,31 +14,10 @@ library(glmnet)
 library(naivebayes)
 library(leaps)
 library(pls)
+library(tree)
+library(randomForest)
+library(gbm)
 ```
-
-To-dos 4/22/24:
-
-- pick an interaction and transformation
-
-- implement 10-fold cv for each method
-
-- 10-fold cv for choosing best subset model
-
-- repeat best subsets for categorical outcome
-
-- compile results into a cohesive table: method - cv estimated error - true test error (one table for quant and one for binary)
-
-- write down assumptions for each method
-
-- idea for simulation study
-
-- idea for bootstrap CI
-
-Questions:
-
-- how to interpret best subset for binary response?
-
-- perform best subset first and proceed with only selected predictors?
 
 # Data Cleaning
 
@@ -129,12 +108,12 @@ hpc_dummies <- hpc_normalize |>
  
 quant_scaled <- hpc_dummies |> 
   select(-c(control_bin_Governmental, control_bin_Proprietary, 
-            provider_bin_Specialized, costs_bin)) |> 
+            provider_bin_Specialized, rural, costs_bin)) |> 
   scale()
 
 qual <- hpc_dummies |> 
   select(c(control_bin_Governmental, control_bin_Proprietary, 
-            provider_bin_Specialized, costs_bin)) 
+            provider_bin_Specialized, rural, costs_bin)) 
 
 hpc_scaled <- cbind(quant_scaled, qual) 
 ```
@@ -311,14 +290,297 @@ test_error_lm2
 ```
 
 
-
 ## Regression Tree (with pruning)
+
+```{r}
+formula <- as.formula("total_costs ~ .")
+tree_train <- tree(formula, 
+             select(train_data, -fold)
+             )
+
+# pruning -- find best size with cv
+set.seed(1)
+cv_tree <- cv.tree(tree_train)
+cv_tree$size[which(cv_tree$dev == min(cv_tree$dev))]
+
+# refit tree with pruning
+
+tree_pruned <- prune.tree(tree_train, best = 9)
+
+pred <- predict(tree_train, newdata = test_data )
+
+test_error_regtree <- mean( (test_data$total_costs - pred)^2 )
+
+test_error_regtree
+```
+
+10-fold CV: ** warnings?
+
+```{r}
+compute_MSEP_regtree <- function(train_data, formula, i){
+  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
+  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
+  
+  tree_train <- tree(formula, 
+             current_train_folds, 
+             control = tree.control(nrow(train_data), 
+                                    mincut = 2,
+                                    minsize = 4,
+                                    mindev = 0.01
+                                    )
+             )
+  
+  tree_pruned <- prune.tree(tree_train, best = 9)
+
+  pred <- predict(tree_train, newdata = current_test_fold )
+    
+  MSEP <- mean( (current_test_fold$total_costs - pred) ^ 2 )
+  return(MSEP)
+}
+
+
+kfold_cv_regtree <- function(train_data, formula, k = 10){
+  
+  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_regtree(train_data, formula, .x))
+  avg_MSEP <- mean(MSEP_vec)
+  return(avg_MSEP)
+  
+}
+
+cv_error_regtree <- kfold_cv_regtree(train_data, formula)
+cv_error_regtree
+```
+
 
 ## Bagging (with variable importance)
 
+```{r}
+n_trees <- 300
+p <- ncol(train_data) - 2
+
+# Bagging
+set.seed(1)
+bag_train <- 
+  randomForest(
+    formula, 
+    data = select(train_data, -fold), 
+    ntree = n_trees, 
+    mtry = p,            # m = p for bagging.
+    keep.forest = TRUE,  # not necessary, using to compute test errors for all trees.
+    importance = TRUE    # not necessary, compute importance of variables.
+    )
+
+# Test errors:
+bag_pred <- predict(bag_train, test_data, predict.all = TRUE)
+
+bag_pred_avg <- map_dbl(1:nrow(test_data), 
+                                 ~mean(bag_pred$individual[.x,])
+                                 )
+
+test_error_bag <- mean( (bag_pred_avg - test_data$total_costs)^2 )
+
+test_error_bag
+```
+
+```{r}
+importance(bag_train)
+```
+
+10-fold CV:
+
+```{r}
+compute_MSEP_bag <- function(train_data, formula, i){
+  set.seed(i)
+  
+  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
+  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
+  
+  n_trees <- 300
+  p <- ncol(current_train_folds) - 1
+  
+  bag_train <- 
+    randomForest(
+      formula, 
+      data = current_train_folds, 
+      ntree = n_trees, 
+      mtry = p,            # m = p for bagging.
+      keep.forest = TRUE,  # not necessary, using to compute test errors for all trees.
+      importance = TRUE    # not necessary, compute importance of variables.
+    )
+  
+  bag_pred <- predict(bag_train, current_test_fold, predict.all = TRUE)
+
+  bag_pred_avg <- map_dbl(1:nrow(current_test_fold), 
+                                 ~mean(bag_pred$individual[.x,])
+                                 )
+    
+  MSEP <- mean( (current_test_fold$total_costs - bag_pred_avg) ^ 2 )
+  return(MSEP)
+}
+
+
+kfold_cv_bag <- function(train_data, formula, k = 10){
+  
+  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_bag(train_data, formula, .x))
+  avg_MSEP <- mean(MSEP_vec)
+  return(avg_MSEP)
+  
+}
+
+cv_error_bag <- kfold_cv_bag(train_data, formula)
+cv_error_bag
+```
+
 ## Random Forest (with variable importance)
 
+Choose optimal m using CV:
+
+```{r}
+compute_error_rf <- function(train_data, formula, i){
+  
+  set.seed(i)
+  
+  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
+  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
+  
+  n_trees <- 300
+  
+  rf_train <- 
+    randomForest(
+      formula, 
+      data = current_train_folds, 
+      ntree = n_trees, 
+      keep.forest = TRUE,  # not necessary, using to compute test errors for all trees.
+      importance = TRUE    # not necessary, compute importance of variables.
+    )
+  
+  rf_pred <- predict(bag_train, current_test_fold, predict.all = TRUE)
+
+  rf_pred_avg <- map_dbl(1:nrow(current_test_fold), 
+                                 ~mean(rf_pred$individual[.x,])
+                                 )
+    
+  MSEP <- mean( (current_test_fold$total_costs - rf_pred_avg) ^ 2 )
+  return(MSEP)
+}
+
+
+kfold_cv_rf <- function(train_data, formula, k = 10){
+  
+  error_vec <- map_dbl(1:k, ~compute_error_rf(train_data, formula, .x))
+  avg_error <- mean(error_vec)
+  return(avg_error)
+  
+}
+
+cv_error_rf <- kfold_cv_rf(train_data, formula)
+cv_error_rf
+```
+
+```{r}
+set.seed(1)
+rf_train <- 
+  randomForest(
+    formula, 
+    data = select(train_data, -fold), 
+    ntree = n_trees,            # m = p for bagging.
+    keep.forest = TRUE,  # not necessary, using to compute test errors for all trees.
+    importance = TRUE    # not necessary, compute importance of variables.
+    )
+
+# Test errors:
+rf_pred <- predict(rf_train, test_data, predict.all = TRUE)
+
+rf_pred_avg <- map_dbl(1:nrow(test_data), 
+                                 ~mean(rf_pred$individual[.x,])
+                                 )
+
+test_error_rf <- mean( (rf_pred_avg - test_data$total_costs)^2 )
+
+test_error_rf
+
+```
+
+```{r}
+importance(rf_train)
+```
+
+
 ## Boosting (including selecting the tuning parameter)
+
+Choose Tuning Paramter With CV:
+
+```{r}
+compute_error_boost <- function(train_data, formula, lambda, i){
+  
+  set.seed(i)
+  
+  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
+  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
+  
+  n_trees <- 300
+  d1 = 1
+  
+  boost_train <- 
+  gbm(
+    formula, 
+    data = current_train_folds, 
+    n.trees = n_trees, 
+    interaction.depth = d1, 
+    shrinkage = lambda
+    )
+  
+  boost_pred <- predict(boost_train, current_test_fold, n.trees = n_trees)
+    
+  MSEP <- mean( (current_test_fold$total_costs - boost_pred) ^ 2 )
+  return(MSEP)
+}
+
+
+kfold_cv_boost <- function(train_data, formula, lambda, k = 10){
+  
+  error_vec <- map_dbl(1:k, ~compute_error_boost(train_data, formula, lambda, .x))
+  avg_error <- mean(error_vec)
+  return(avg_error)
+  
+}
+
+lambda_grid <- seq(0, 3, by = 0.1)
+
+#cv_error_rates <- map_dbl(lambda_grid, ~kfold_cv_boost(train_data, formula, .x, k = 10))
+
+#optimal_lambda <- lambda_grid[which(cv_error_rates == min(cv_error_rates))]
+
+optimal_lambda <- 0.1
+
+#cv_error_rate_optimal_lambda <- min(cv_error_rates)
+#cv_error_rate_optimal_lambda
+
+cv_error_rate_optimal_lambda <- 0.08466906
+
+cv_error_boost <- cv_error_rate_optimal_lambda
+```
+
+
+```{r}
+d1 = 1
+
+boost_train <- 
+  gbm(
+    formula, 
+    data = select(train_data, -fold), 
+    n.trees = n_trees, 
+    interaction.depth = d1, 
+    shrinkage = optimal_lambda
+    )
+
+# Test errors:
+boost_pred <- predict(boost_train, test_data, n.trees = n_trees)
+
+test_error_boost <- mean( (boost_pred - test_data$total_costs)^2 )
+
+test_error_boost
+```
 
 ## Neural Network
 
@@ -675,7 +937,8 @@ cv_error <- c(cv_error_lm, cv_error_lm2, cv_error_bsub, cv_error_fwd,
 test_error <- c(test_error_lm, test_error_lm2, test_error_bsub, test_error_fwd, 
               test_error_bwd, test_error_ridge, test_error_lasso, test_error_pcr)
 
-error_summary <- tibble(method, cv_error, test_error)
+error_summary <- tibble(method, cv_error, test_error) |> 
+  mutate_if(is.numeric, ~round(.x, 3))
 
 knitr::kable(error_summary)
 ```
@@ -741,8 +1004,6 @@ compute_error_knn <- function(train_data, i, c){
 }
 
 
-
-
 kfold_cv_knn <- function(train_data, k = 10, c){
   
   error_vec <- map_dbl(1:k, ~compute_error_knn(train_data, .x, c))
@@ -753,9 +1014,9 @@ kfold_cv_knn <- function(train_data, k = 10, c){
 
 c_values <- 1:100
 
-# cv_error_rates <- map_dbl(c_values, ~kfold_cv_knn(train_data, k = 10, c = .x))
+cv_error_rates <- map_dbl(c_values, ~kfold_cv_knn(train_data, k = 10, c = .x))
 
-# optimal_c <- which(cv_error_rates == min(cv_error_rates))
+optimal_c <- which(cv_error_rates == min(cv_error_rates))
 
 optimal_c <- 17
 
