@@ -307,7 +307,7 @@ cv_tree$size[which(cv_tree$dev == min(cv_tree$dev))]
 
 tree_pruned <- prune.tree(tree_train, best = 9)
 
-pred <- predict(tree_train, newdata = test_data )
+pred <- predict(tree_pruned, newdata = test_data )
 
 test_error_regtree <- mean( (test_data$total_costs - pred)^2 )
 
@@ -323,7 +323,7 @@ compute_MSEP_regtree <- function(train_data, formula, i){
   
   tree_train <- tree(formula, 
              current_train_folds, 
-             control = tree.control(nrow(train_data), 
+             control = tree.control(nrow(current_train_folds), 
                                     mincut = 2,
                                     minsize = 4,
                                     mindev = 0.01
@@ -332,7 +332,7 @@ compute_MSEP_regtree <- function(train_data, formula, i){
   
   tree_pruned <- prune.tree(tree_train, best = 9)
 
-  pred <- predict(tree_train, newdata = current_test_fold )
+  pred <- predict(tree_pruned, newdata = current_test_fold )
     
   MSEP <- mean( (current_test_fold$total_costs - pred) ^ 2 )
   return(MSEP)
@@ -1611,6 +1611,71 @@ cm_lasso_bin
 
 
 ## Decision Tree (with pruning)
+
+```{r}
+train_data <- train_data |> 
+  mutate(costs_bin = as.factor(costs_bin))
+
+test_data <- test_data |> 
+  mutate(costs_bin = as.factor(costs_bin))
+
+formula <- as.formula("costs_bin ~ .")
+tree_train <- tree(formula, 
+             select(train_data, -fold),
+             control = tree.control(1866496, mincut = 1000),
+             split = "gini"
+             )
+
+# pruning -- find best size with cv
+set.seed(1)
+cv_tree <- cv.tree(tree_train)
+cv_tree$size[which(cv_tree$dev == min(cv_tree$dev))]
+
+# refit tree with pruning
+
+tree_pruned <- prune.misclass(tree_train, best = 4)
+
+pred <- predict(tree_pruned, newdata = test_data, type = "class")
+
+test_error_classtree <- mean( test_data$costs_bin != pred )
+
+test_error_classtree
+```
+
+10-fold CV: 
+
+```{r}
+compute_error_classtree <- function(train_data, formula, i){
+  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
+  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
+  
+  tree_train <- tree(formula, 
+             current_train_folds,
+             control = tree.control(1866496, mincut = 1000),
+             split = "gini"
+             )
+  
+  tree_pruned <- prune.tree(tree_train, best = 4)
+
+  pred <- predict(tree_pruned, newdata = current_test_fold, type = "class")
+
+  error <- mean( current_test_fold$costs_bin != pred )
+  return(error)
+}
+
+
+kfold_cv_classtree <- function(train_data, formula, k = 10){
+  
+  MSEP_vec <- map_dbl(1:k, ~compute_error_classtree(train_data, formula, .x))
+  avg_MSEP <- mean(MSEP_vec)
+  return(avg_MSEP)
+  
+}
+
+cv_error_classtree <- kfold_cv_classtree(train_data, formula)
+cv_error_classtree
+```
+
 
 ## Bagging (with variable importance)
 
