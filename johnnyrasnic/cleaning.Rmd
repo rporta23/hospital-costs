@@ -935,13 +935,232 @@ erates
 
 ## Decision Tree (with pruning)
 
+```{r}
+library(tree)
+set.seed(1)
+
+train.X = df_train |> mutate(costs_bin = as.factor(costs_bin)) |> select(-c(total_costs))
+test.X = df_test |> mutate(costs_bin = as.factor(costs_bin)) |> select(-c(total_costs))
+
+tree_mod = tree(costs_bin ~ ., data=train.X, control = tree.control(1866496, mincut = 1000),
+                split = "gini")
+
+cv_tree = cv.tree(tree_mod)
+
+k = cv.tree(tree_mod)$size[which(cv_tree$dev == min(cv_tree$dev))][1]
+
+print(k)
+
+tree_pruned <- prune.misclass(tree_mod, best = k)
+
+pred <- predict(tree_pruned, newdata = test.X, type = "class")
+
+test_error_classtree <- mean( test.X$costs_bin != pred )
+
+test_error_classtree
+
+table(pred, test.X$costs_bin)
+
+erates = rep(0,10)
+
+for (i in 1:10) {
+  train.X = hpc_scaled |> mutate(costs_bin = as.factor(costs_bin)) |> filter(fold != i) |> select(-c(fold,set,total_costs))
+  test.X = hpc_scaled |> mutate(costs_bin = as.factor(costs_bin)) |> filter(fold == i) |> select(-c(fold,set,total_costs))
+  
+  tree_mod = tree(costs_bin ~ ., data=train.X, control = tree.control(1866496, mincut = 1000),
+                split = "gini")
+  
+  tree_pruned <- prune.misclass(tree_mod, best = k)
+  
+  pred <- predict(tree_pruned, newdata = test.X, type = "class")
+  
+  erates[i] =  mean( test.X$costs_bin != pred )
+}
+
+erates
+```
+
+```{r}
+library(tree)
+set.seed(1)
+
+train.X = df_train|> select(-c(costs_bin))
+test.X = df_test |> select(-c(costs_bin))
+
+tree_mod = tree(total_costs ~ ., data=train.X, control = tree.control(1866496, mincut = 1000),
+                split = "gini")
+
+cv_tree = cv.tree(tree_mod)
+
+k = cv.tree(tree_mod)$size[which(cv_tree$dev == min(cv_tree$dev))][1]
+
+print(k)
+
+tree_pruned <- prune.tree(tree_mod, best = k)
+
+pred <- predict(tree_pruned, newdata = test.X)
+
+test_error_classtree <- mean( (test.X$total_costs - pred )^2)
+
+test_error_classtree
+
+erates = rep(0,10)
+
+for (i in 1:10) {
+  train.X = hpc_scaled |> mutate(costs_bin = as.factor(costs_bin)) |> filter(fold != i) |> select(-c(fold,set,costs_bin))
+  test.X = hpc_scaled |> mutate(costs_bin = as.factor(costs_bin)) |> filter(fold == i) |> select(-c(fold,set,costs_bin))
+  
+  tree_mod = tree(total_costs ~ ., data=train.X, control = tree.control(1866496, mincut = 1000),
+                split = "gini")
+  
+  tree_pruned <- prune.tree(tree_mod, best = k)
+  
+  pred <- predict(tree_pruned, newdata = test.X)
+  
+  erates[i] =  mean( (test.X$total_costs - pred )^2)
+}
+
+erates
+```
+
 ## Bagging (with variable importance)
 
+```{r}
+library(randomForest)
+set.seed(1)
+
+train.X = df_train |> select(-costs_bin)
+test.X = df_test |> select(-costs_bin)
+
+bag.total_costs = randomForest(total_costs ~ ., data = train.X, mtry = length(train.X)-1)
+
+pred = predict(bag.total_costs, newdata=test.X)
+
+mean((pred - test.X$total_costs)^2)
+
+importance(bag.total_costs)
+
+erates=rep(0,10)
+
+for (i in 1:10) {
+  train.X = df_train |> filter(fold != i) |> select(-costs_bin)
+  test.X = df_test |> filter(fold == i) |> select(-costs_bin)
+
+  bag.total_costs = randomForest(total_costs ~ ., data = train.X, mtry = length(train.X)-1)
+  
+  pred = predict(bag.total_costs, newdata=test.X)
+  
+  erates[i] = mean((pred - test.X$total_costs)^2)
+}
+
+```
+
+```{r}
+library(randomForest)
+set.seed(1)
+
+train.X = df_train |> select(-total_costs)
+test.X = df_test |> select(-total_costs)
+
+bag.costs_bin = randomForest(costs_bin ~ ., data = train.X, mtry = length(train.X)-1)
+
+pred = predict(bag.costs_bin, newdata=test.X)
+
+mean(pred != test.X$costs_bin)
+
+importance(bag.costs_bin)
+
+erates=rep(0,10)
+
+for (i in 1:10) {
+  train.X = df_train |> filter(fold != i) |> select(-total_costs)
+  test.X = df_test |> filter(fold == i) |> select(-total_costs)
+
+  bag.costs_bin = randomForest(costs_bin ~ ., data = train.X, mtry = length(train.X)-1)
+  
+  pred = predict(bag.costs_bin, newdata=test.X)
+  
+  erates[i] = mean(pred != test.X$costs_bin)
+}
+
+```
+
 ## Random Forest (with variable importance)
+
+```{r}
+library(randomForest)
+set.seed(1)
+
+train.X = df_train |> select(-total_costs)
+test.X = df_test |> select(-total_costs)
+
+bag.costs_bin = randomForest(costs_bin ~ ., data = train.X)
+
+pred = predict(bag.costs_bin, newdata=test.X)
+
+mean(pred != test.X$costs_bin)
+
+importance(bag.costs_bin)
+
+erates=rep(0,10)
+
+for (i in 1:10) {
+  train.X = df_train |> filter(fold != i) |> select(-total_costs)
+  test.X = df_test |> filter(fold == i) |> select(-total_costs)
+
+  bag.costs_bin = randomForest(costs_bin ~ ., data = train.X)
+  
+  pred = predict(bag.costs_bin, newdata=test.X)
+  
+  erates[i] = mean(pred != test.X$costs_bin)
+}
+
+```
+
+```{r}
+library(randomForest)
+set.seed(1)
+
+train.X = df_train |> select(-costs_bin)
+test.X = df_test |> select(-costs_bin)
+
+bag.total_costs = randomForest(total_costs ~ ., data = train.X)
+
+pred = predict(bag.total_costs, newdata=test.X)
+
+mean((pred - test.X$total_costs)^2)
+
+importance(bag.total_costs)
+
+erates=rep(0,10)
+
+for (i in 1:10) {
+  train.X = df_train |> filter(fold != i) |> select(-costs_bin)
+  test.X = df_test |> filter(fold == i) |> select(-costs_bin)
+
+  bag.total_costs = randomForest(total_costs ~ ., data = train.X)
+  
+  pred = predict(bag.total_costs, newdata=test.X)
+  
+  erates[i] = mean((pred - test.X$total_costs)^2)
+}
+```
 
 ## Boosting (including selecting the tuning parameter)
 
 (For the above three methods, calculate the Gini index on each leaf of the final tree to examine the purity of the node.)
+
+```{r}
+library(gbm)
+set.seed(1)
+
+train.X = df_train |> select(-total_costs)
+test.X = df_test |> select(-total_costs)
+
+boost.costs_bin = gbm(costs_bin ~ ., data = train.X, distribution = "bernoulli", n.trees = 5000, interaction.depth = 4)
+
+pred = round(predict(boost.costs_bin, newdata=test.X, type="response"))
+```
 
 ## Neural Network
 
