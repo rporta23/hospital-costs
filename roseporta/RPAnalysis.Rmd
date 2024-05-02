@@ -17,6 +17,7 @@ library(pls)
 library(tree)
 library(randomForest)
 library(gbm)
+library(keras)
 ```
 
 # Data Cleaning
@@ -466,8 +467,8 @@ kfold_cv_rf <- function(train_data, formula, k = 10){
   
 }
 
-cv_error_rf <- kfold_cv_rf(train_data, formula)
-cv_error_rf
+# cv_error_rf <- kfold_cv_rf(train_data, formula)
+cv_error_rf <- 0.01316977
 ```
 
 ```{r}
@@ -922,13 +923,15 @@ cv_error_pcr
 
 ```{r}
 method <- c("Linear Regression (Main Effects)", "Linear Regression (Transformations)",
-            "Best Subset", "Forward Stepwise", "Backward Stepwise", "Ridge", "Lasso", "PCR")
+            "Best Subset", "Forward Stepwise", "Backward Stepwise", "Ridge", "Lasso", "PCR", "Regression Tree", "Bagging", "Random Forest", "Boosting")
 
 cv_error <- c(cv_error_lm, cv_error_lm2, cv_error_bsub, cv_error_fwd, 
-              cv_error_bwd, cv_error_ridge, cv_error_lasso, cv_error_pcr)
+              cv_error_bwd, cv_error_ridge, cv_error_lasso, cv_error_pcr,
+              cv_error_regtree, cv_error_bag, cv_error_rf, cv_error_boost)
 
 test_error <- c(test_error_lm, test_error_lm2, test_error_bsub, test_error_fwd, 
-              test_error_bwd, test_error_ridge, test_error_lasso, test_error_pcr)
+              test_error_bwd, test_error_ridge, test_error_lasso, test_error_pcr,
+              test_error_regtree, test_error_bag, test_error_rf, test_error_boost)
 
 error_summary <- tibble(method, cv_error, test_error) |> 
   mutate_if(is.numeric, ~round(.x, 3))
@@ -1635,6 +1638,12 @@ test_error_classtree <- mean( test_data$costs_bin != pred )
 test_error_classtree
 ```
 
+```{r}
+cm_classtree <- confusion_matrix(pred, test_data$costs_bin)
+cm_classtree
+```
+
+
 10-fold CV: 
 
 ```{r}
@@ -1950,6 +1959,45 @@ test_error_boost
 (For the above three methods, calculate the Gini index on each leaf of the final tree to examine the purity of the node.)
 
 ## Neural Network
+
+```{r}
+x_train <- train_data |> select(-c(costs_bin, fold))
+y_train <- train_data$costs_bin
+
+x_test <- test_data |> select(-costs_bin)
+y_test <- test_data$costs_bin
+
+modelnn <- keras_model_sequential()
+modelnn %>%
+  layer_dense(units = 256, activation = "relu",
+              input_shape = 784) %>%
+  layer_dropout(rate = 0.4) %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 10, activation = "softmax")
+
+modelnn %>% 
+  compile(
+    loss = "categorical_crossentropy",
+    optimizer = optimizer_rmsprop(), 
+    metrics = "accuracy"
+    )
+
+system.time(
+  history <- 
+    modelnn %>%
+    fit(
+      x_train, 
+      y_train, 
+      epochs = 30, 
+      batch_size = 128,
+      validation_split = 0.2
+      )
+  )
+
+pred_nn <- predict(x_test)
+```
+
 
 ## Calculate True/False Positive/Negative rates for each method
 
