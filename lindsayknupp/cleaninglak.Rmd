@@ -1,6 +1,6 @@
 ---
 title: "Data Cleaning"
-author: "Rose Porta"
+author: "Lindsay Knupp"
 date: "`r Sys.Date()`"
 output: pdf_document
 ---
@@ -182,7 +182,7 @@ summary(hpc_clean)
 Pairs plot:
 
 ```{r}
-pairs(hpc_dummies)
+# pairs(hpc_dummies)
 ```
 
 -   very high pairwise positive collinearity between:
@@ -438,6 +438,8 @@ testMSE_multiple_lm <- compute_testMSE_multiple_lm(train,test)
 ```{r}
 library(tree)
 
+set.seed(1)
+
 train = df_train %>%
   select(-costs_bin)
 
@@ -476,7 +478,7 @@ prune.costs.full = prune.tree(tree.costs.full,best=optimalnodesfull)
 prune.pred.full = predict(prune.costs.full,test)
 testerrorprunefull = mean(  (test$total_costs - prune.pred.full)^2  )
 ```
-Best number of terminal nodes is 8 but that is too large when using individual folds for cross validation error rates. 
+Best number of terminal nodes is 9 but that is too large when using individual folds for cross validation error rates. 
 
 k fold CV 
 ```{r}
@@ -485,7 +487,7 @@ compute_MSEP_regression_tree <- function(train_data,i){
     current_test_fold <- filter(train_data, fold == i)
     
     tree.costs = tree(total_costs ~ ., data = select(current_train_folds,-fold))
-    prune.costs = prune.tree(tree.costs,best = 7)
+    prune.costs = prune.tree(tree.costs,best = 9)
     
     prune.pred = predict(prune.costs,select(current_test_fold,-fold))
     
@@ -497,7 +499,7 @@ cv_regression_tree = mean(map_dbl(1:10,~compute_MSEP_regression_tree(train,.x)))
 compute_testMSE_regression_tree <- function(train_data,test_data){
   
   tree.costs = tree(total_costs ~ ., data = select(train_data,-fold))
-  prune.costs = prune.tree(tree.costs,best = 7)
+  prune.costs = prune.tree(tree.costs,best = 9)
   
   prune.pred = predict(prune.costs,test_data)
   
@@ -1472,38 +1474,124 @@ falsepos_nb_kde = model_info$falsepos
 falseneg_nb_kde = model_info$falseneg
 ```
 
-# Qualitative summary
-```{r}
-
-method <- c("KNN","Multiple Logistic Regression","LDA","QDA","Naive Bayes (Gaussian)",
-            "Naive Bayes (KDE)")
-
-cv_error <- c(cv_knn,cv_glm,cv_lda,cv_qda,cv_nb,cv_nb_kde)
-
-error_rates <- c(testMSE_knn,testMSE_glm,testMSE_lda,testMSE_qda,testMSE_nb,
-                testMSE_nb_kde)
-
-true_pos <- c(truepos_knn,truepos_glm,truepos_lda,truepos_qda,truepos_nb,
-              truepos_nb_kde)
-
-true_neg <- c(trueneg_knn,trueneg_glm,trueneg_lda,trueneg_qda,trueneg_nb,
-              trueneg_nb_kde)
-
-false_pos <- c(falsepos_knn,falsepos_glm,falsepos_lda,falsepos_qda,falsepos_nb,
-              falsepos_nb_kde)
-
-false_neg <- c(falseneg_knn,falseneg_glm,falseneg_lda,falseneg_qda,falseneg_nb,
-              falseneg_nb_kde)
-
-error_summary <- tibble(method,cv_error,error_rates,true_pos,true_neg,
-                        false_pos,false_neg)
-
-knitr::kable(error_summary)
-```
-
 ## Decision Tree (with pruning)
 
+```{r}
+library(tree)
+
+set.seed(1)
+
+train = df_train %>%
+  select(-total_costs) %>%
+  mutate(costs_bin = as.factor(costs_bin))
+
+test = df_test %>%
+  select(-total_costs) %>%
+  mutate(costs_bin = as.factor(costs_bin))
+
+# Original tree 
+tree.costs = tree(costs_bin ~ ., data = select(train,-fold))
+summary(tree.costs)
+plot(tree.costs)
+text(tree.costs)
+# Original errors
+tree.pred = predict(tree.costs,test,type="class")
+testerror = mean(  (test$costs_bin != tree.pred)  )
+
+# Optimal number of nodes
+cv.costs = cv.tree(tree.costs)
+plot(cv.costs$size, cv.costs$dev, type = "b")
+optimalnodes = cv.costs$size[which.min(cv.costs$dev)]
+# Prune tree with optimal number of nodes 
+prune.costs = prune.tree(tree.costs,best=optimalnodes)
+# Compute new errors 
+prune.pred = predict(prune.costs,test,type="class")
+testerrorprune = mean(  (test$costs_bin != prune.pred)  )
+
+
+# Now, fit larger tree with pruning to see if we get better results 
+tree.costs.full = tree(costs_bin ~ ., data = select(train,-fold),
+                        control = tree.control(nrow(train), mindev = 0))
+cv.costs.full = cv.tree(tree.costs.full)
+plot(cv.costs.full$size, cv.costs.full$dev, type = "b")
+optimalnodesfull = cv.costs.full$size[which.min(cv.costs.full$dev)]
+
+prune.costs.full = prune.tree(tree.costs.full,best=optimalnodesfull)
+# Compute new errors 
+prune.pred.full = predict(prune.costs.full,test,type="class")
+testerrorprunefull = mean(  (test$costs_bin != prune.pred.full) )
+```
+Best number of terminal nodes is 6.
+
+k fold CV 
+```{r}
+compute_MSEP_regression_tree <- function(train_data,i){
+    current_train_folds <- filter(train_data, fold != i)
+    current_test_fold <- filter(train_data, fold == i)
+    
+    tree.costs = tree(costs_bin ~ ., data = select(current_train_folds,-fold))
+    prune.costs = prune.tree(tree.costs,best = 6)
+    
+    prune.pred = predict(prune.costs,select(current_test_fold,-fold),type="class")
+    
+    return (mean((current_test_fold$costs_bin != prune.pred)) )
+}
+
+cv_decision_tree = mean(map_dbl(1:10,~compute_MSEP_regression_tree(train,.x)))
+```
+
+Test error 
+```{r}
+tree.costs = tree(costs_bin ~ ., data = select(train,-fold))
+prune.costs = prune.tree(tree.costs,best = 6)
+
+prune.pred = predict(prune.costs,test,type="class")
+
+model_info = tibble(.rows=1)
+
+contingency = table(prune.pred,test$costs_bin)
+#           Actual:           
+#           below   above
+# Predicted:
+# below 
+# above
+
+model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+model_info$falsepos = 1 - model_info$trueneg
+model_info$falseneg = 1 - model_info$truepos
+model_info$error = mean(test$costs_bin != prune.pred)
+
+testMSE_decision_tree = model_info$error
+truepos_decision_tree = model_info$truepos
+trueneg_decision_tree = model_info$trueneg
+falsepos_decision_tree = model_info$falsepos
+falseneg_decision_tree = model_info$falseneg
+
+# testMSE_regression_tree <- compute_testMSE_regression_tree(train,test)
+```
+
 ## Bagging (with variable importance)
+
+```{r}
+library(randomForest)
+
+set.seed(1)
+
+train = df_train %>%
+  select(-total_costs) %>%
+  mutate(costs_bin = as.factor(costs_bin))
+
+test = df_test %>%
+  select(-total_costs) %>%
+  mutate(costs_bin = as.factor(costs_bin))
+
+bag.costs <- randomForest(costs_bin ~ ., data = select(train,-fold), mtry = ncol(train)-2,importance = TRUE  )
+
+
+
+```
+
 
 ## Random Forest (with variable importance)
 
@@ -1512,6 +1600,37 @@ knitr::kable(error_summary)
 (For the above three methods, calculate the Gini index on each leaf of the final tree to examine the purity of the node.)
 
 ## Neural Network
+
+
+## Qualitative summary
+```{r}
+
+method <- c("KNN","Multiple Logistic Regression","LDA","QDA","Naive Bayes (Gaussian)",
+            "Naive Bayes (KDE)","Decision Tree")
+
+cv_error <- c(cv_knn,cv_glm,cv_lda,cv_qda,cv_nb,cv_nb_kde,cv_decision_tree)
+
+error_rates <- c(testMSE_knn,testMSE_glm,testMSE_lda,testMSE_qda,testMSE_nb,
+                testMSE_nb_kde,testMSE_decision_tree)
+
+true_pos <- c(truepos_knn,truepos_glm,truepos_lda,truepos_qda,truepos_nb,
+              truepos_nb_kde,truepos_decision_tree)
+
+true_neg <- c(trueneg_knn,trueneg_glm,trueneg_lda,trueneg_qda,trueneg_nb,
+              trueneg_nb_kde,trueneg_decision_tree)
+
+false_pos <- c(falsepos_knn,falsepos_glm,falsepos_lda,falsepos_qda,falsepos_nb,
+              falsepos_nb_kde,falsepos_decision_tree)
+
+false_neg <- c(falseneg_knn,falseneg_glm,falseneg_lda,falseneg_qda,falseneg_nb,
+              falseneg_nb_kde,falseneg_decision_tree)
+
+error_summary <- tibble(method,cv_error,error_rates,true_pos,true_neg,
+                        false_pos,false_neg)
+
+knitr::kable(error_summary)
+```
+
 
 ## Calculate True/False Positive/Negative rates for each method
 
