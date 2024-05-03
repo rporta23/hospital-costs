@@ -1698,36 +1698,28 @@ bag_train <-
     )
 
 # Test errors:
-bag_pred <- predict(bag_train, test_data, predict.all = TRUE)
+bag_pred <- predict(bag_train, test_data, type = "class")
 
-# Need majority vote:
-find_mode <- function(x) {
-  u <- unique(x)
-  tab <- tabulate(match(x, u))
-  mode <- u[tab == max(tab)]
-  return(mode[1])  # taking the first element arbitrarily in the rare case there's a tie.
-}
+test_error_bag_cl <- mean( bag_pred != test_data$costs_bin)
 
-test_predictions_majority <- 
-  matrix(bag_pred$individual[ , 1], ncol = 1)
-for (i in 2:n_trees) {
-  test_predictions_majority <-
-    cbind(
-      test_predictions_majority,
-      apply(bag_pred$individual[ , 1:i], 1, find_mode)
-    )
-}
-
-test_error_for_all_trees <- colMeans(test_predictions_majority != test_data$costs_bin)
-
-
-test_error_bag_cl <- mean(test_error_for_all_trees)
 test_error_bag_cl
 ```
 
 ```{r}
 importance(bag_train)
 ```
+
+```{r}
+cm_bag <- confusion_matrix(bag_pred, test_data$costs_bin)
+cm_bag
+```
+
+```{r}
+mean_decrease_Gini = importance(bag_train,type=2)
+mean_decrease_Gini
+```
+
+
 
 10-fold CV:
 
@@ -1751,24 +1743,11 @@ compute_error_bag_cl <- function(train_data, formula, i){
       importance = TRUE    # not necessary, compute importance of variables.
     )
   
-  bag_pred <- predict(bag_train, current_test_fold, predict.all = TRUE)
-
-  test_predictions_majority <- 
-    matrix(bag_pred$individual[ , 1], ncol = 1)
-  for (i in 2:n_trees) {
-    test_predictions_majority <-
-      cbind(
-        test_predictions_majority,
-        apply(bag_pred$individual[ , 1:i], 1, find_mode)
-      )
-  }
+  bag_pred <- predict(bag_train, current_test_fold, type = "class")
   
-  test_error_for_all_trees <- 
-    colMeans(test_predictions_majority != current_test_fold$costs_bin)
-  
-  avg_error <-  mean(test_error_for_all_trees)
+  error <-  mean(bag_pred != current_test_fold$costs_bin)
 
-  return(avg_error)
+  return(error)
 }
 
 
@@ -1806,24 +1785,11 @@ compute_error_rf_cl <- function(train_data, formula, i){
       importance = TRUE    # not necessary, compute importance of variables.
     )
   
-  rf_pred <- predict(bag_train, current_test_fold, predict.all = TRUE)
-
-  test_predictions_majority <- 
-    matrix(rf_pred$individual[ , 1], ncol = 1)
-  for (i in 2:n_trees) {
-    test_predictions_majority <-
-      cbind(
-        test_predictions_majority,
-        apply(rf_pred$individual[ , 1:i], 1, find_mode)
-      )
-  }
+  rf_pred <- predict(bag_train, current_test_fold, type = "class")
   
-  test_error_for_all_trees <- 
-    colMeans(test_predictions_majority != current_test_fold$costs_bin)
-  
-  avg_error <-  mean(test_error_for_all_trees)
+  error <-  mean(rf_pred != current_test_fold$costs_bin)
 
-  return(avg_error)
+  return(error)
 }
 
 
@@ -1851,24 +1817,10 @@ rf_train <-
     )
 
 # Test errors:
-rf_pred <- predict(rf_train, test_data, predict.all = TRUE)
+rf_pred <- predict(rf_train, test_data, type = "class")
 
-test_predictions_majority <- 
-  matrix(rf_pred$individual[ , 1], ncol = 1)
-for (i in 2:n_trees) {
-  test_predictions_majority <-
-    cbind(
-      test_predictions_majority,
-      apply(rf_pred$individual[ , 1:i], 1, find_mode)
-    )
-}
-
-test_error_for_all_trees <- colMeans(test_predictions_majority != test_data$costs_bin)
-
-
-test_error_rf_cl <- mean(test_error_for_all_trees)
+test_error_rf_cl <- mean(rf_pred != test_data$costs_bin)
 test_error_rf_cl
-
 
 ```
 
@@ -1877,9 +1829,26 @@ importance(rf_train)
 ```
 
 
+```{r}
+cm_rf <- confusion_matrix(rf_pred, test_data$costs_bin)
+cm_rf
+```
+
+```{r}
+mean_decrease_Gini = importance(rf_train,type=2)
+mean_decrease_Gini
+```
+
 ## Boosting (including selecting the tuning parameter)
 
 Choose Tuning Paramter With CV:
+
+```{r}
+train_data <- df_train |> select(-c(total_costs))
+
+test_data <- df_test |> select(-c(total_costs))
+```
+
 
 ```{r}
 compute_error_boost <- function(train_data, formula, lambda, i){
@@ -1890,21 +1859,23 @@ compute_error_boost <- function(train_data, formula, lambda, i){
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
   
   n_trees <- 300
-  d1 = 1
   
   boost_train <- 
   gbm(
     formula, 
     data = current_train_folds, 
+    distribution = "bernoulli",
     n.trees = n_trees, 
-    interaction.depth = d1, 
     shrinkage = lambda
     )
   
-  boost_pred <- predict(boost_train, current_test_fold, n.trees = n_trees)
-    
-  MSEP <- mean( (current_test_fold$total_costs - boost_pred) ^ 2 )
-  return(MSEP)
+  boost_pred <- predict(boost_train, current_test_fold, n.trees = n_trees, type = "response")
+  
+  pred_class <- ifelse(boost_pred >= 0.5, 1, 0)
+
+  error <- mean( (pred_class != current_test_fold$costs_bin) )
+  
+  return(error)
 }
 
 
@@ -1922,45 +1893,51 @@ lambda_grid <- seq(0, 3, by = 0.1)
 
 #optimal_lambda <- lambda_grid[which(cv_error_rates == min(cv_error_rates))]
 
-optimal_lambda <- 0.1
+optimal_lambda <- 0.2
 
 #cv_error_rate_optimal_lambda <- min(cv_error_rates)
 #cv_error_rate_optimal_lambda
 
-cv_error_rate_optimal_lambda <- 0.08466906
+cv_error_rate_optimal_lambda <- 0.03718827
 
-cv_error_boost <- cv_error_rate_optimal_lambda
+cv_error_boost_cl <- cv_error_rate_optimal_lambda
 ```
 
 
 ```{r}
-d1 = 1
-
-optimal_lambda <- 0.01
-
+set.seed(1)
 boost_train <- 
   gbm(
     formula, 
     data = select(train_data, -fold), 
+    distribution = "bernoulli",
     n.trees = n_trees, 
-    interaction.depth = d1, 
-    shrinkage = optimal_lambda
+    shrinkage = optimal_lambda,
+    
     )
 
 # Test errors:
-boost_pred <- predict(boost_train, test_data, n.trees = n_trees)
+boost_pred <- predict(boost_train, test_data, n.trees = n_trees, type = "response")
 
-test_error_boost <- mean( (boost_pred != test_data$costs_bin) )
+pred_class <- ifelse(boost_pred >= 0.5, 1, 0)
 
-test_error_boost
+test_error_boost_cl <- mean( (pred_class != test_data$costs_bin) )
+
+test_error_boost_cl
 ```
+
+```{r}
+cm_boost <- confusion_matrix(pred_class, test_data$costs_bin)
+cm_boost
+```
+
 
 
 (For the above three methods, calculate the Gini index on each leaf of the final tree to examine the purity of the node.)
 
 ## Neural Network
 
-```{r}
+```{r, eval = FALSE}
 x_train <- train_data |> select(-c(costs_bin, fold))
 y_train <- train_data$costs_bin
 
@@ -2007,26 +1984,32 @@ pred_nn <- predict(x_test)
 cm_summary <- bind_rows(cm_logistic, cm_logistic2, cm_fwd_bin, 
               cm_bwd_bin, cm_ridge_bin, cm_lasso_bin,
               cm_knn, cm_lda, cm_qda, 
-              cm_nb, cm_nb_kde)
+              cm_nb, cm_nb_kde, cm_classtree, cm_bag,
+              cm_rf, cm_boost)
 
 #cm_summary
 ```
+
+\newpage
 
 
 ```{r}
 method <- c("Logistic Regression (Main Effects)", "Logistic Regression (Transformations)",
             "Forward Stepwise", "Backward Stepwise", "Ridge", "Lasso", "KNN",
-            "LDA", "QDA", "Naive Bayes- Gaussian", "Naive Bayes- KDE")
+            "LDA", "QDA", "Naive Bayes- Gaussian", "Naive Bayes- KDE", "Decision Tree",
+            "Bagging", "Random Forest", "Boosting")
 
 cv_error <- c(cv_error_logistic, cv_error_logistic2, cv_error_fwd_bin, 
               cv_error_bwd_bin, cv_error_ridge_bin, cv_error_lasso_bin,
               cv_error_knn, cv_error_lda, cv_error_qda, 
-              cv_error_nb, cv_error_nb_kde)
+              cv_error_nb, cv_error_nb_kde, cv_error_classtree, cv_error_bag_cl,
+              cv_error_rf_cl, cv_error_boost_cl)
 
 test_error <- c(test_error_logistic, test_error_logistic2, test_error_fwd_bin, 
               test_error_bwd_bin, test_error_ridge_bin, test_error_lasso_bin,
               test_error_knn, test_error_lda, test_error_qda, 
-              test_error_nb, test_error_nb_kde)
+              test_error_nb, test_error_nb_kde, test_error_classtree, test_error_bag_cl,
+              test_error_rf_cl, test_error_boost_cl)
 
 error_summary <- tibble(method, cv_error, test_error) |> 
   bind_cols(cm_summary) |> 
