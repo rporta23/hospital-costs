@@ -1036,15 +1036,16 @@ kfold_cv_knn <- function(train_data,neighbors, k = 10) {
 }
 
 neighbors <- 1:100 
-knn_error_rates = map_dbl(neighbors, ~kfold_cv_knn(train,neighbors = .x))
+# Commented lines out b/c it takes so long
+# knn_error_rates = map_dbl(neighbors, ~kfold_cv_knn(train,neighbors = .x))
 
-optimal_n <- which.min(knn_error_rates)
-optimal_error_rate <- knn_error_rates[optimal_n]
+# optimal_n <- which.min(knn_error_rates)
+# optimal_error_rate <- knn_error_rates[optimal_n]
 
-optimal_n
-optimal_error_rate
+optimal_n <- 5
+optimal_error_rate <- 0.05057881
 
-cv_knn = mean(knn_error_rates)
+cv_knn = optimal_error_rate
 ```
 
 ### Compare true test error rate
@@ -1585,19 +1586,186 @@ train = df_train %>%
 test = df_test %>%
   select(-total_costs) %>%
   mutate(costs_bin = as.factor(costs_bin))
+```
 
+k-fold CV
+```{r}
+compute_MSEP_bagging <- function(train_data,i){
+    current_train_folds <- filter(train_data, fold != i)
+    current_test_fold <- filter(train_data, fold == i)
+    
+    bag.costs <- randomForest(costs_bin ~ ., data = select(current_train_folds,-fold),
+                              mtry = ncol(current_train_folds)-2,importance = TRUE  )
+    bag.pred = predict(bag.costs,select(current_test_fold,-fold),type="class")
+    
+    return (mean(current_test_fold$costs_bin != bag.pred) )
+}
+
+cv_bagging = mean(map_dbl(1:10,~compute_MSEP_bagging(train,.x)))
+```
+
+```{r}
 bag.costs <- randomForest(costs_bin ~ ., data = select(train,-fold), mtry = ncol(train)-2,importance = TRUE  )
 
+bag.pred = predict(bag.costs,test,type="class")
 
+mean_decrease_Gini = importance(bag.costs,type=2)
+varImpPlot(bag.costs)
+
+contingency = bag.costs$confusion
+model_info = tibble(.rows=1)
+
+model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+model_info$falsepos = 1 - model_info$trueneg
+model_info$falseneg = 1 - model_info$truepos
+model_info$error = mean(test$costs_bin != bag.pred)
+
+testMSE_bagging = model_info$error
+truepos_bagging = model_info$truepos
+trueneg_bagging = model_info$trueneg
+falsepos_bagging = model_info$falsepos
+falseneg_bagging = model_info$falseneg
 
 ```
 
-
 ## Random Forest (with variable importance)
+
+```{r}
+library(randomForest)
+
+set.seed(1)
+
+train = df_train %>%
+  select(-total_costs) %>%
+  mutate(costs_bin = as.factor(costs_bin))
+
+test = df_test %>%
+  select(-total_costs) %>%
+  mutate(costs_bin = as.factor(costs_bin))
+```
+
+k-fold CV
+```{r}
+compute_MSEP_random_forest <- function(train_data,i){
+    current_train_folds <- filter(train_data, fold != i)
+    current_test_fold <- filter(train_data, fold == i)
+    
+    random_forest.costs <- randomForest(costs_bin ~ ., data = select(current_train_folds,-fold),
+                              mtry = sqrt(ncol(current_train_folds)-2),importance = TRUE  )
+    random_forest.pred = predict(random_forest.costs,select(current_test_fold,-fold),type="class")
+    
+    return (mean(current_test_fold$costs_bin != random_forest.pred) )
+}
+
+cv_random_forest = mean(map_dbl(1:10,~compute_MSEP_random_forest(train,.x)))
+```
+
+```{r}
+random_forest.costs <- randomForest(costs_bin ~ ., data = select(train,-fold),
+                                    mtry = sqrt(ncol(current_train_folds)-2),
+                                    importance = TRUE  )
+
+random_forest.pred = predict(random_forest.costs,test,type="class")
+
+mean_decrease_Gini = importance(random_forest.costs,type=2)
+varImpPlot(random_forest.costs)
+
+contingency = random_forest.costs$confusion
+model_info = tibble(.rows=1)
+
+model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+model_info$falsepos = 1 - model_info$trueneg
+model_info$falseneg = 1 - model_info$truepos
+model_info$error = mean(test$costs_bin != random_forest.pred)
+
+testMSE_random_forest = model_info$error
+truepos_random_forest = model_info$truepos
+trueneg_random_forest = model_info$trueneg
+falsepos_random_forest = model_info$falsepos
+falseneg_random_forest = model_info$falseneg
+
+```
 
 ## Boosting (including selecting the tuning parameter)
 
-(For the above three methods, calculate the Gini index on each leaf of the final tree to examine the purity of the node.)
+```{r}
+library(gbm)
+
+set.seed(1)
+
+train = df_train %>%
+  select(-total_costs) 
+
+test = df_test %>%
+  select(-total_costs) 
+  
+# boost.costs = gbm(costs_bin ~ ., data = select(train,-fold),
+#                   distribution = "bernoulli",n.trees = 1000)
+# summary(boost.costs)
+# 
+# boost.pred = round(predict(boost.costs,test,type="response"))
+# error = mean(boost.pred != test$costs_bin)
+# 
+# plot(boost.costs,i="salaries")
+# plot(boost.costs,i="fte_employees_on_payroll")
+```
+
+k-fold CV
+```{r}
+compute_MSEP_boosting <- function(train_data,lambda,i){
+    current_train_folds <- filter(train_data, fold != i)
+    current_test_fold <- filter(train_data, fold == i)
+    
+    boost.costs = gbm(costs_bin ~ ., data = select(current_train_folds,-fold),
+                  distribution = "bernoulli",n.trees = 1000,shrinkage = lambda)
+    boost.pred = round(predict(boost.costs,select(current_test_fold,-fold),
+                               type="response"))
+    
+    return (mean(current_test_fold$costs_bin != boost.pred) )
+}
+
+kfold_cv_boosting <- function(train_data,lambda){
+  cv_boosting = mean(map_dbl(1:10,~compute_MSEP_boosting(train_data,
+                                                         lambda = lambda,.x)))
+  return (cv_boosting)
+}
+
+lambda_grid = seq(0.01,0.1,0.005)
+# Commented line out b/c it takes so long 
+# lambda_errors = map_dbl(lambda_grid,~kfold_cv_boosting(train,.x))
+
+# optimal_lambda = lambda_grid[which.min(lambda_errors)]
+optimal_lambda = 0.08
+# cv_boosting = min(lambda_errors)
+cv_boosting = 0.03601762
+```
+
+Test Error 
+```{r}
+boost.costs = gbm(costs_bin ~ ., data = select(train,-fold),
+                  distribution = "bernoulli",n.trees = 5000,shrinkage = optimal_lambda)
+
+boost.pred = round(predict(boost.costs,test,type="response"))
+    
+contingency = table(boost.pred,test$costs_bin)
+
+model_info = tibble(.rows=1)
+
+model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+model_info$falsepos = 1 - model_info$trueneg
+model_info$falseneg = 1 - model_info$truepos
+model_info$error = mean(test$costs_bin != boost.pred)
+
+testMSE_boosting = model_info$error
+truepos_boosting = model_info$truepos
+trueneg_boosting = model_info$trueneg
+falsepos_boosting = model_info$falsepos
+falseneg_boosting = model_info$falseneg
+
+```
 
 ## Neural Network
 
@@ -1606,24 +1774,31 @@ bag.costs <- randomForest(costs_bin ~ ., data = select(train,-fold), mtry = ncol
 ```{r}
 
 method <- c("KNN","Multiple Logistic Regression","LDA","QDA","Naive Bayes (Gaussian)",
-            "Naive Bayes (KDE)","Decision Tree")
+            "Naive Bayes (KDE)","Decision Tree","Bagging","Random Forest",
+            "Boosting")
 
-cv_error <- c(cv_knn,cv_glm,cv_lda,cv_qda,cv_nb,cv_nb_kde,cv_decision_tree)
+cv_error <- c(cv_knn,cv_glm,cv_lda,cv_qda,cv_nb,cv_nb_kde,cv_decision_tree,
+              cv_bagging,cv_random_forest,cv_boosting)
 
 error_rates <- c(testMSE_knn,testMSE_glm,testMSE_lda,testMSE_qda,testMSE_nb,
-                testMSE_nb_kde,testMSE_decision_tree)
+                testMSE_nb_kde,testMSE_decision_tree,testMSE_bagging,
+                testMSE_random_forest,testMSE_boosting)
 
 true_pos <- c(truepos_knn,truepos_glm,truepos_lda,truepos_qda,truepos_nb,
-              truepos_nb_kde,truepos_decision_tree)
+              truepos_nb_kde,truepos_decision_tree,truepos_bagging,
+              truepos_random_forest,truepos_boosting)
 
 true_neg <- c(trueneg_knn,trueneg_glm,trueneg_lda,trueneg_qda,trueneg_nb,
-              trueneg_nb_kde,trueneg_decision_tree)
+              trueneg_nb_kde,trueneg_decision_tree,trueneg_bagging,
+              trueneg_random_forest,trueneg_boosting)
 
 false_pos <- c(falsepos_knn,falsepos_glm,falsepos_lda,falsepos_qda,falsepos_nb,
-              falsepos_nb_kde,falsepos_decision_tree)
+              falsepos_nb_kde,falsepos_decision_tree,falsepos_bagging,
+              falsepos_random_forest,falsepos_boosting)
 
 false_neg <- c(falseneg_knn,falseneg_glm,falseneg_lda,falseneg_qda,falseneg_nb,
-              falseneg_nb_kde,falseneg_decision_tree)
+              falseneg_nb_kde,falseneg_decision_tree,falseneg_bagging,
+              falseneg_random_forest,falseneg_boosting)
 
 error_summary <- tibble(method,cv_error,error_rates,true_pos,true_neg,
                         false_pos,false_neg)
