@@ -813,6 +813,66 @@ cv_error_ridge <- kfold_cv_ridge(train_data, lambda_min, alpha = 0)
 cv_error_ridge
 ```
 
+## Bootstrap Estimate of Standard Errors for Ridge Regression
+
+```{r}
+# original training data
+given_sample <- train_data |> select(-fold)
+
+# function to compute bootstrap estimate of SE
+compute_bootstrap_est <- function(given_sample, lambda_min, b){
+  
+  set.seed(b)
+  
+  n <- nrow(given_sample)
+  
+  bootstrap_sample_idx <- sample(n, replace = TRUE)
+  Z <- given_sample[bootstrap_sample_idx, , drop = F]
+  x_b <- model.matrix(total_costs ~ ., data = Z)[ , -1]
+  y_b <- Z$total_costs
+  modb <- glmnet(x_b, y_b, alpha = 0, lambda = lambda_min)
+  est_coef_ridge <- coef(modb)
+  est_coef_ridge_mat <- t(as.matrix(est_coef_ridge))[ , -1]
+  
+  return(data.frame(as.list(est_coef_ridge_mat)))
+}
+
+# number of times to repeat bootstrap
+B = 1000
+
+# compute 1000 bootstrap estimates
+boot_ests <- map_dfr(1:B, ~compute_bootstrap_est(given_sample, lambda_min, .x))
+
+# compute standard error of bootstrap estimates
+SE_boot <- map_dbl(boot_ests, sd)
+
+SE_boot
+```
+
+```{r}
+# compare to multiple regression
+formula <- as.formula("total_costs ~ .")
+
+mod_mlr <- lm(formula, data = select(train_data, -fold) )
+
+SE_ols <- coef(summary(mod_mlr))[, "Std. Error"][-1]
+
+SE_ols
+```
+
+```{r}
+# plot to compare ols to ridge
+data_plot <- tibble(SE_boot, SE_ols)
+
+ggplot(data_plot, aes(x = SE_boot, y = SE_ols)) +
+  geom_point() +
+  labs(title = "Ridge Versus OLS Standard Errors",
+       x = "Ridge (bootstrap) SE",
+       y = "OLS SE"
+       )
+```
+
+
 
 ## Lasso (find the best tuning parameter using cross-validation)
 
@@ -1785,7 +1845,7 @@ compute_error_rf_cl <- function(train_data, formula, i){
       importance = TRUE    # not necessary, compute importance of variables.
     )
   
-  rf_pred <- predict(bag_train, current_test_fold, type = "class")
+  rf_pred <- predict(rf_train, current_test_fold, type = "class")
   
   error <-  mean(rf_pred != current_test_fold$costs_bin)
 
@@ -1801,8 +1861,8 @@ kfold_cv_rf_cl <- function(train_data, formula, k = 10){
   
 }
 
-cv_error_rf_cl <- kfold_cv_rf_cl(train_data, formula)
-cv_error_rf_cl
+#cv_error_rf_cl <- kfold_cv_rf_cl(train_data, formula)
+cv_error_rf_cl <- 0.03640008
 ```
 
 ```{r}
@@ -2018,6 +2078,5 @@ error_summary <- tibble(method, cv_error, test_error) |>
 knitr::kable(error_summary)
 ```
 
-# Bootstrap CI
 
 # Simulation Study
