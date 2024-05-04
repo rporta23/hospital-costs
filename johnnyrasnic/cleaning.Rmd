@@ -430,11 +430,137 @@ erates
 
 ## Regression Tree (with pruning)
 
+```{r}
+{r}
+library(tree)
+set.seed(1)
+
+train.X = df_train|> select(-c(costs_bin))
+test.X = df_test |> select(-c(costs_bin))
+
+tree_mod = tree(total_costs ~ ., data=train.X, control = tree.control(1866496, mincut = 1000),
+                split = "gini")
+
+cv_tree = cv.tree(tree_mod)
+
+k = cv.tree(tree_mod)$size[which(cv_tree$dev == min(cv_tree$dev))][1]
+
+print(k)
+
+tree_pruned <- prune.tree(tree_mod, best = k)
+
+pred <- predict(tree_pruned, newdata = test.X)
+
+test_error_classtree <- mean( (test.X$total_costs - pred )^2)
+
+test_error_classtree
+
+erates = rep(0,10)
+
+for (i in 1:10) {
+  train.X = hpc_scaled |> mutate(costs_bin = as.factor(costs_bin)) |> filter(fold != i) |> select(-c(fold,set,costs_bin))
+  test.X = hpc_scaled |> mutate(costs_bin = as.factor(costs_bin)) |> filter(fold == i) |> select(-c(fold,set,costs_bin))
+  
+  tree_mod = tree(total_costs ~ ., data=train.X, control = tree.control(1866496, mincut = 1000),
+                split = "gini")
+  
+  tree_pruned <- prune.tree(tree_mod, best = k)
+  
+  pred <- predict(tree_pruned, newdata = test.X)
+  
+  erates[i] =  mean( (test.X$total_costs - pred )^2)
+}
+
+erates
+
+mean(erates)
+```
+
 ## Bagging (with variable importance)
+
+```{r}
+library(randomForest)
+set.seed(1)
+
+train.X = df_train |> select(-costs_bin)
+test.X = df_test |> select(-costs_bin)
+
+bag.total_costs = randomForest(total_costs ~ ., data = train.X, mtry = length(train.X)-1)
+
+pred = predict(bag.total_costs, newdata=test.X)
+
+mean((pred - test.X$total_costs)^2)
+
+importance(bag.total_costs)
+
+erates=rep(0,10)
+
+for (i in 1:10) {
+  train.X = hpc_scaled |> filter(fold != i) |> select(-costs_bin)
+  test.X = hpc_scaled |> filter(fold == i) |> select(-costs_bin)
+
+  bag.total_costs = randomForest(total_costs ~ ., data = train.X, mtry = length(train.X)-1)
+  
+  pred = predict(bag.total_costs, newdata=test.X)
+  
+  erates[i] = mean((pred - test.X$total_costs)^2)
+}
+
+erates
+
+mean(erates)
+```
 
 ## Random Forest (with variable importance)
 
+```{r}
+library(randomForest)
+set.seed(1)
+
+train.X = df_train |> select(-costs_bin)
+test.X = df_test |> select(-costs_bin)
+
+bag.total_costs = randomForest(total_costs ~ ., data = train.X)
+
+pred = predict(bag.total_costs, newdata=test.X)
+
+mean((pred - test.X$total_costs)^2)
+
+importance(bag.total_costs)
+
+erates=rep(0,10)
+
+for (i in 1:10) {
+  train.X = hpc_scaled |> filter(fold != i) |> select(-costs_bin)
+  test.X = hpc_scaled |> filter(fold == i) |> select(-costs_bin)
+
+  bag.total_costs = randomForest(total_costs ~ ., data = train.X)
+  
+  pred = predict(bag.total_costs, newdata=test.X)
+  
+  erates[i] = mean((pred - test.X$total_costs)^2)
+}
+
+erates
+
+mean(erates)
+```
+
 ## Boosting (including selecting the tuning parameter)
+
+```{r}
+library(gbm)
+set.seed(1)
+
+train.X = df_train |> select(-costs_bin)
+test.X = df_test |> select(-costs_bin)
+
+boost.total_costs = gbm(total_costs ~ ., data = train.X, distribution = "gaussian", n.trees = 5000, interaction.depth = 4)
+
+summary(boost.total_costs)
+
+pred = predict(boost.total_costs, newdata=test.X)
+```
 
 ## Neural Network
 
@@ -640,6 +766,8 @@ erates[i] = mean((pred - test.X$total_costs)^2)
 }
 
 erates
+
+mean(erates)
 ```
 
 # Qualitative Outcome Analyses
@@ -714,6 +842,10 @@ for (i in 1:10) {
 
 erates
 })
+
+erates
+
+mean(erates)
 ```
 
 ```{r}
@@ -753,6 +885,11 @@ for (i in 1:10) {
 erates
 
 })
+
+
+erates
+
+mean(erates)
 ```
 
 ```{r}
@@ -796,6 +933,10 @@ for (i in 1:10) {
 erates
 
 })
+
+erates
+
+mean(erates)
 ```
 
 ## LDA
@@ -823,6 +964,10 @@ for (i in 1:10) {
     
     erates[i] = mean(lda_costs_pred != test.X$costs_bin)
 }
+
+erates
+
+mean(erates)
 ```
 
 ## QDA
@@ -849,7 +994,10 @@ for (i in 1:10) {
     
     erates[i] = mean(qda_costs_pred != test.X$costs_bin)
 }
+
 erates
+
+mean(erates)
 ```
 
 ## Naive Bayes (at least two kernels)
@@ -931,6 +1079,8 @@ for (i in 1:10) {
 }
 
 erates
+
+mean(erates)
 ```
 
 ## Decision Tree (with pruning)
@@ -978,81 +1128,16 @@ for (i in 1:10) {
 }
 
 erates
+
+mean(erates)
 ```
 
-```{r}
-library(tree)
-set.seed(1)
-
-train.X = df_train|> select(-c(costs_bin))
-test.X = df_test |> select(-c(costs_bin))
-
-tree_mod = tree(total_costs ~ ., data=train.X, control = tree.control(1866496, mincut = 1000),
-                split = "gini")
-
-cv_tree = cv.tree(tree_mod)
-
-k = cv.tree(tree_mod)$size[which(cv_tree$dev == min(cv_tree$dev))][1]
-
-print(k)
-
-tree_pruned <- prune.tree(tree_mod, best = k)
-
-pred <- predict(tree_pruned, newdata = test.X)
-
-test_error_classtree <- mean( (test.X$total_costs - pred )^2)
-
-test_error_classtree
-
-erates = rep(0,10)
-
-for (i in 1:10) {
-  train.X = hpc_scaled |> mutate(costs_bin = as.factor(costs_bin)) |> filter(fold != i) |> select(-c(fold,set,costs_bin))
-  test.X = hpc_scaled |> mutate(costs_bin = as.factor(costs_bin)) |> filter(fold == i) |> select(-c(fold,set,costs_bin))
-  
-  tree_mod = tree(total_costs ~ ., data=train.X, control = tree.control(1866496, mincut = 1000),
-                split = "gini")
-  
-  tree_pruned <- prune.tree(tree_mod, best = k)
-  
-  pred <- predict(tree_pruned, newdata = test.X)
-  
-  erates[i] =  mean( (test.X$total_costs - pred )^2)
-}
-
-erates
+```         
 ```
 
 ## Bagging (with variable importance)
 
-```{r}
-library(randomForest)
-set.seed(1)
-
-train.X = df_train |> select(-costs_bin)
-test.X = df_test |> select(-costs_bin)
-
-bag.total_costs = randomForest(total_costs ~ ., data = train.X, mtry = length(train.X)-1)
-
-pred = predict(bag.total_costs, newdata=test.X)
-
-mean((pred - test.X$total_costs)^2)
-
-importance(bag.total_costs)
-
-erates=rep(0,10)
-
-for (i in 1:10) {
-  train.X = df_train |> filter(fold != i) |> select(-costs_bin)
-  test.X = df_test |> filter(fold == i) |> select(-costs_bin)
-
-  bag.total_costs = randomForest(total_costs ~ ., data = train.X, mtry = length(train.X)-1)
-  
-  pred = predict(bag.total_costs, newdata=test.X)
-  
-  erates[i] = mean((pred - test.X$total_costs)^2)
-}
-
+```         
 ```
 
 ```{r}
@@ -1064,7 +1149,7 @@ test.X = df_test |> select(-total_costs)
 
 bag.costs_bin = randomForest(costs_bin ~ ., data = train.X, mtry = length(train.X)-1)
 
-pred = predict(bag.costs_bin, newdata=test.X)
+pred = predict(bag.costs_bin, newdata=test.X, type="class")
 
 mean(pred != test.X$costs_bin)
 
@@ -1073,16 +1158,19 @@ importance(bag.costs_bin)
 erates=rep(0,10)
 
 for (i in 1:10) {
-  train.X = df_train |> filter(fold != i) |> select(-total_costs)
-  test.X = df_test |> filter(fold == i) |> select(-total_costs)
+  train.X = hpc_scaled |> filter(fold != i) |> select(-total_costs)
+  test.X = hpc_scaled |> filter(fold == i) |> select(-total_costs)
 
   bag.costs_bin = randomForest(costs_bin ~ ., data = train.X, mtry = length(train.X)-1)
   
-  pred = predict(bag.costs_bin, newdata=test.X)
+  pred = predict(bag.costs_bin, newdata=test.X, type="class")
   
   erates[i] = mean(pred != test.X$costs_bin)
 }
 
+erates
+
+mean(erates)
 ```
 
 ## Random Forest (with variable importance)
@@ -1096,7 +1184,7 @@ test.X = df_test |> select(-total_costs)
 
 bag.costs_bin = randomForest(costs_bin ~ ., data = train.X)
 
-pred = predict(bag.costs_bin, newdata=test.X)
+pred = predict(bag.costs_bin, newdata=test.X, type="class")
 
 mean(pred != test.X$costs_bin)
 
@@ -1105,45 +1193,19 @@ importance(bag.costs_bin)
 erates=rep(0,10)
 
 for (i in 1:10) {
-  train.X = df_train |> filter(fold != i) |> select(-total_costs)
-  test.X = df_test |> filter(fold == i) |> select(-total_costs)
+  train.X = hpc_scaled |> filter(fold != i) |> select(-total_costs)
+  test.X = hpc_scaled |> filter(fold == i) |> select(-total_costs)
 
   bag.costs_bin = randomForest(costs_bin ~ ., data = train.X)
   
-  pred = predict(bag.costs_bin, newdata=test.X)
+  pred = predict(bag.costs_bin, newdata=test.X, type="class")
   
   erates[i] = mean(pred != test.X$costs_bin)
 }
 
-```
+erates
 
-```{r}
-library(randomForest)
-set.seed(1)
-
-train.X = df_train |> select(-costs_bin)
-test.X = df_test |> select(-costs_bin)
-
-bag.total_costs = randomForest(total_costs ~ ., data = train.X)
-
-pred = predict(bag.total_costs, newdata=test.X)
-
-mean((pred - test.X$total_costs)^2)
-
-importance(bag.total_costs)
-
-erates=rep(0,10)
-
-for (i in 1:10) {
-  train.X = df_train |> filter(fold != i) |> select(-costs_bin)
-  test.X = df_test |> filter(fold == i) |> select(-costs_bin)
-
-  bag.total_costs = randomForest(total_costs ~ ., data = train.X)
-  
-  pred = predict(bag.total_costs, newdata=test.X)
-  
-  erates[i] = mean((pred - test.X$total_costs)^2)
-}
+mean(erates)
 ```
 
 ## Boosting (including selecting the tuning parameter)
@@ -1154,8 +1216,8 @@ for (i in 1:10) {
 library(gbm)
 set.seed(1)
 
-train.X = df_train |> select(-total_costs)
-test.X = df_test |> select(-total_costs)
+train.X = hpc_scaled |> select(-total_costs)
+test.X = hpc_scaled |> select(-total_costs)
 
 boost.costs_bin = gbm(costs_bin ~ ., data = train.X, distribution = "bernoulli", n.trees = 5000, interaction.depth = 4)
 
