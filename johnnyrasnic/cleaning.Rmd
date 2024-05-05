@@ -778,12 +778,15 @@ mean(erates)
 library(class)
 set.seed(1)
 
+train.X = df_train |> select(-c(costs_bin,total_costs))
+test.X = df_test |> select(-c(costs_bin, total_costs))
+
 K = 25
 
 erates = rep(0,K)
 
 for (i in 1:K) {
-  knn.pred = knn(df_train, df_test, df_train$costs_bin, k = i)
+  knn.pred = knn(train.X, test.X, df_train$costs_bin, k = i)
   erates[i] = mean(knn.pred != df_test$costs_bin)
 }
 
@@ -791,15 +794,18 @@ erates = matrix(rep(0, 10*K), nrow = 10, ncol =K)
 
 for (i in 1:10) {
   for (j in 1:K) {
-    train.X = select(filter(hpc_dummies, fold != i), -c("fold", "set"))
-    test.X = select(filter(hpc_dummies, fold == i), -c("fold", "set"))
+    train.X = filter(hpc_scaled, fold != i) |> select(-c(fold, set,total_costs,costs_bin))
+    test.X = filter(hpc_scaled, fold == i) |> select(-c(fold, set,total_costs,costs_bin))
     
-    knn.pred = knn(train.X, test.X, train.X$costs_bin, k = j)
+    knn.pred = knn(train.X, test.X, df_train$costs_bin, k = j)
+    test.X = filter(hpc_scaled, fold == i) |> select(-c(fold, set,total_costs))
    erates[[i,j]] = mean(knn.pred != test.X$costs_bin)
   }
 }
 
-as_tibble(erates) |> summarize(across(everything(), mean))
+summarized_k = as_tibble(erates) |> summarize(across(everything(), mean))
+
+which.min(summarized_k)
 ```
 
 ## Multiple logistic regression
@@ -1231,3 +1237,48 @@ pred = round(predict(boost.costs_bin, newdata=test.X, type="response"))
 # Bootstrap CI
 
 # Simulation Study
+
+```{r}
+set.seed(1)
+library(tidyverse)
+library(faux)
+
+df =  hpc_scaled |> select(-c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, costs_bin, rural, set, fold))
+
+sim = sim_df(df, 1000)
+
+cat_df =  hpc_scaled |> select(c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, rural))
+
+p = colMeans(cat_df)
+
+sim_cat = data.frame(matrix(nrow = 1000, ncol = 0))
+
+for (i in colnames(cat_df)) {
+  sim_cat[,i] = rbinom(1000, 1, p=p[i])
+}
+
+sim = cbind(sim,sim_cat)
+
+train_prop = 0.9
+
+n = nrow(sim)
+n_train = train_prop*n
+n_test = n - n_train
+
+sim$set = "Train"
+sim$set[sample(n, n_test, replace = FALSE)] = "Test"
+
+sim = sim |> select(-id)
+
+train.X = sim |> select(-c(costs_bin,total_costs))
+test.X = df_test |> select(-c(costs_bin, total_costs))
+
+K = 25
+
+erates = rep(0,K)
+
+for (i in 1:K) {
+  knn.pred = knn(train.X, test.X, df_train$costs_bin, k = i)
+  erates[i] = mean(knn.pred != df_test$costs_bin)
+}
+```
