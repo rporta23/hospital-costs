@@ -18,6 +18,7 @@ library(tree)
 library(randomForest)
 library(gbm)
 library(keras)
+library(faux)
 ```
 
 # Data Cleaning
@@ -2080,3 +2081,99 @@ knitr::kable(error_summary)
 
 
 # Simulation Study
+
+```{r}
+
+```
+
+
+
+```{r}
+set.seed(1)
+library(tidyverse)
+library(faux)
+
+compute_min_k <- function(df_train, seed){
+  
+  set.seed(seed)
+  
+  df =  df_train |> select(-c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, costs_bin, rural, fold))
+  
+  sim = sim_df(df, 1000)
+  
+  cat_df =  hpc_scaled |> select(c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, rural))
+  
+  p = colMeans(cat_df)
+  
+  sim_cat = data.frame(matrix(nrow = 1000, ncol = 0))
+  
+  for (i in colnames(cat_df)) {
+    sim_cat[,i] = rbinom(1000, 1, p=p[i])
+  }
+  
+  sim = cbind(sim,sim_cat) |> 
+    mutate(costs_bin = ifelse(total_costs > median(total_costs), 1, 0))
+  
+  train_prop = 0.9
+  
+  n = nrow(sim)
+  n_train = train_prop*n
+  n_test = n - n_train
+  
+  sim$set = "Train"
+  sim$set[sample(n, n_test, replace = FALSE)] = "Test"
+  
+  sim = sim |> select(-id)
+  
+  train.X = sim |> 
+    filter(set == "Train") |> 
+    select(-c(costs_bin,total_costs, set))
+  
+  train.Y = sim |> 
+    filter(set == "Train") |> 
+    pull(costs_bin)
+  
+  test.X = sim |> 
+    filter(set == "Test") |> 
+    select(-c(costs_bin, total_costs, set))
+  
+  test.Y = sim |> 
+    filter(set == "Test") |> 
+    pull(costs_bin)
+  
+  K = 100
+  
+  erates = rep(0,K)
+  
+  for (i in 1:K) {
+    knn.pred = knn(train.X, test.X, train.Y, k = i)
+    erates[i] = mean(knn.pred != test.Y)
+  }
+  
+  k_optimal <- which.min(erates)
+  
+  min_erate <- min(erates)
+  
+  var_error <- var(erates)
+  
+  max_erate <- max(erates)
+  
+  result <- tibble(
+    i = seed,
+    k = k_optimal,
+    error = min_erate,
+    var = var_error,
+    max_erate
+  )
+  
+  return(result)
+  
+}
+
+compute_min_k(df_train, 1)
+
+results <- map_dfr(1:10,  ~compute_min_k(df_train, .x) )
+
+results
+```
+
