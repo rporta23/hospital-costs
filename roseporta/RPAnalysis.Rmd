@@ -25,99 +25,87 @@ library(faux)
 
 ```{r}
 hpc <- read_csv(here::here("hpc.csv"))
-#summary(hpc)
+# summary(hpc)
 
-hpcdf <- hpc |> 
-  mutate(start = as.Date(`Fiscal Year Begin Date`),end = as.Date(`Fiscal Year End Date`)) |> 
-  mutate(days = as.numeric(end - start)) |> 
-  mutate(numBeds = `Total Bed Days Available`/days,id = row_number())
+hpcdf <- hpc |>
+  mutate(
+    start = as.Date(`Fiscal Year Begin Date`), end = as.Date(`Fiscal Year End Date`)
+  ) |>
+  mutate(days = as.numeric(end - start)) |>
+  mutate(numBeds = `Total Bed Days Available` / days, id = row_number())
 ```
 
 ```{r}
-hpc_clean <- hpcdf |> 
-  janitor::clean_names() |> 
+hpc_clean <- hpcdf |>
+  janitor::clean_names() |>
   select(provider_ccn, days, number_of_beds,
-         total_costs, rural_versus_urban, provider_type, type_of_control,
-         fte_employees_on_payroll, total_days = total_days_v_xviii_xix_unknown,
-         total_discharges = total_discharges_v_xviii_xix_unknown,
-         total_income, total_assets,
-         salaries = total_salaries_from_worksheet_a) |> 
-  na.omit() |> 
-  mutate(rural = ifelse(rural_versus_urban == "R", 1, 0),
-         control_bin = case_when(
-           type_of_control < 3 ~ "Voluntary",
-           (type_of_control >= 3 & type_of_control < 7) ~ "Proprietary",
-           type_of_control >= 7 ~ "Governmental"
-         ),
-         provider_bin = ifelse(provider_type < 3 |
-                                 provider_type == 6,
-                               "General", "Specialized"
-                               ),
-         ) |> 
-  select(- c(rural_versus_urban, type_of_control, provider_type))
+    total_costs, rural_versus_urban, provider_type, type_of_control,
+    fte_employees_on_payroll,
+    total_days = total_days_v_xviii_xix_unknown,
+    total_discharges = total_discharges_v_xviii_xix_unknown,
+    total_income, total_assets,
+    salaries = total_salaries_from_worksheet_a
+  ) |>
+  na.omit() |>
+  mutate(
+    rural = ifelse(rural_versus_urban == "R", 1, 0),
+    control_bin = case_when(
+      type_of_control < 3 ~ "Voluntary",
+      (type_of_control >= 3 & type_of_control < 7) ~ "Proprietary",
+      type_of_control >= 7 ~ "Governmental"
+    ),
+    provider_bin = ifelse(provider_type < 3 |
+      provider_type == 6,
+    "General", "Specialized"
+    ),
+  ) |>
+  select(-c(rural_versus_urban, type_of_control, provider_type))
 
-duplicates <- hpc_clean |> 
-  group_by(provider_ccn) |> 
-  summarise(count = n()) |> 
+duplicates <- hpc_clean |>
+  group_by(provider_ccn) |>
+  summarise(count = n()) |>
   filter(count > 1)
 
 dup <- map_lgl(hpc_clean$provider_ccn, `%in%`, duplicates$provider_ccn)
 
-hpc1 <- hpc_clean |> 
-  filter(!dup)
+hpc_clean$duplicate <- as.numeric(dup)
 
-hpc2 <- hpc_clean |> 
-  filter(dup) |> 
-  group_by(provider_ccn) |> 
-  summarise(
-    days = sum(days),
-    number_of_beds = mean(number_of_beds),
-    total_costs = sum(total_costs),
-    fte_employees_on_payroll = mean(fte_employees_on_payroll),
-    total_days = sum(total_days),
-    total_discharges = sum(total_discharges),
-    total_income = sum(total_income),
-    total_assets = mean(total_assets),
-    salaries = sum(salaries),
-    rural = max(rural),
-    control_bin = max(control_bin),
-    provider_bin = max(provider_bin)
-  )
-
-hpc_all <- bind_rows(hpc1, hpc2)
-
-hpc_normalize <- hpc_all |> 
+hpc_normalize <- hpc_clean |>
   mutate(
-    total_costs = total_costs/days,
-    inpatients = total_days/days,
-    total_discharges = total_discharges/days,
-    total_income = total_income/days,
-    salaries = salaries/days
-    )
+    total_costs = total_costs / days,
+    inpatients = total_days / days,
+    total_discharges = total_discharges / days,
+    total_income = total_income / days,
+    salaries = salaries / days
+  )
 ```
 
 ```{r}
-hpc_dummies <- hpc_normalize |> 
-  select(-c(provider_ccn, days)) |> 
+hpc_dummies <- hpc_normalize |>
+  select(-c(provider_ccn, days)) |>
   mutate(
     costs_bin = ifelse(total_costs > median(total_costs), 1, 0)
-    ) |> 
-  tidytable::get_dummies(drop_first = TRUE) |> 
+  ) |>
+  tidytable::get_dummies() |>
+  select(-c(control_bin_Voluntary, provider_bin_General)) |> 
   select(where(is.numeric))
 ```
 
 ```{r}
- 
-quant_scaled <- hpc_dummies |> 
-  select(-c(control_bin_Governmental, control_bin_Proprietary, 
-            provider_bin_Specialized, rural, costs_bin)) |> 
+quant_scaled <- hpc_dummies |>
+  select(-c(
+    control_bin_Governmental, control_bin_Proprietary,
+    provider_bin_Specialized, rural, costs_bin, duplicate
+  )) |>
   scale()
 
-qual <- hpc_dummies |> 
-  select(c(control_bin_Governmental, control_bin_Proprietary, 
-            provider_bin_Specialized, rural, costs_bin)) 
+qual <- hpc_dummies |>
+  select(c(
+    control_bin_Governmental, control_bin_Proprietary,
+    provider_bin_Specialized, rural, costs_bin, duplicate
+  ))
 
-hpc_scaled <- cbind(quant_scaled, qual) 
+hpc_scaled <- cbind(quant_scaled, qual)
 ```
 
 
@@ -129,14 +117,18 @@ set.seed(1)
 train_prop <- 0.9
 
 n <- nrow(hpc_scaled)
-n_train <- train_prop*n
+n_train <- train_prop * n
 n_test <- n - n_train
 
 hpc_scaled$set <- "Train"
 hpc_scaled$set[sample(n, n_test, replace = FALSE)] <- "Test"
-  
-df_train <- hpc_scaled |>  filter(set == "Train") |> select(-set)
-df_test <- hpc_scaled |> filter(set == "Test") |> select(-set)
+
+df_train <- hpc_scaled |>
+  filter(set == "Train") |>
+  select(-set)
+df_test <- hpc_scaled |>
+  filter(set == "Test") |>
+  select(-set)
 ```
 
 
@@ -160,10 +152,12 @@ n_train <- nrow(df_train)
 
 k <- 10
 k.o <- k
-kvals <- unique(round(n_train/(1L:floor(n_train/2))))
+kvals <- unique(round(n_train / (1L:floor(n_train / 2))))
 temp <- abs(kvals - k)
-if (!any(temp == 0))  { k <- kvals[temp == min(temp)][1L] }
-f <- ceiling(n_train/k)
+if (!any(temp == 0)) {
+  k <- kvals[temp == min(temp)][1L]
+}
+f <- ceiling(n_train / k)
 
 df_train$fold <- sample(rep(1L:k, f), n_train)
 ```
@@ -181,9 +175,9 @@ test_data <- df_test |> select(-c(costs_bin))
 
 ```{r}
 # model summaries
-map(predictors, ~summary(lm(total_costs ~ .x, data = df_train)))
+map(predictors, ~ summary(lm(total_costs ~ .x, data = df_train)))
 
-simple_models <- map(predictors, ~lm(total_costs ~ .x, data = df_train))
+simple_models <- map(predictors, ~ lm(total_costs ~ .x, data = df_train))
 ```
 
 10-fold cv
@@ -196,27 +190,25 @@ predictor_names <- colnames(predictors)
 formulas <- str_c("total_costs", " ~ ", predictor_names)
 
 
-compute_MSEP_lm <- function(train_data, formula, i){
+compute_MSEP_lm <- function(train_data, formula, i) {
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-    
+
   mod <- lm(formula, data = current_train_folds)
-  pred <- predict(mod, newdata = select( current_test_fold, -c(total_costs) ) )
-    
-  MSEP <- mean( (current_test_fold$total_costs - pred) ^ 2 )
+  pred <- predict(mod, newdata = select(current_test_fold, -c(total_costs)))
+
+  MSEP <- mean((current_test_fold$total_costs - pred)^2)
   return(MSEP)
 }
 
 
-kfold_cv_lm <- function(train_data, formula, k = 10){
-  
-  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_lm(train_data, formula, .x))
+kfold_cv_lm <- function(train_data, formula, k = 10) {
+  MSEP_vec <- map_dbl(1:k, ~ compute_MSEP_lm(train_data, formula, .x))
   avg_MSEP <- mean(MSEP_vec)
   return(avg_MSEP)
-  
 }
 
-test_error_vec <- map_dbl( formulas, ~kfold_cv_lm(df_train, formula = .x, k = 10) )
+test_error_vec <- map_dbl(formulas, ~ kfold_cv_lm(df_train, formula = .x, k = 10))
 
 test_error_vec
 ```
@@ -224,18 +216,17 @@ test_error_vec
 True Test Error
 
 ```{r}
-compute_MSEP_test <- function(formula, train_data, test_data){
-  
+compute_MSEP_test <- function(formula, train_data, test_data) {
   train_data <- train_data |> select(-fold)
-  
+
   mod <- lm(formula, data = train_data)
-  pred <- predict(mod, newdata = select( test_data, -c(total_costs) ) )
-    
-  MSEP <- mean( (test_data$total_costs - pred) ^ 2 )
+  pred <- predict(mod, newdata = select(test_data, -c(total_costs)))
+
+  MSEP <- mean((test_data$total_costs - pred)^2)
   return(MSEP)
 }
 
-test_MSEP_vec <- map_dbl(formulas, ~compute_MSEP_test(.x, df_train, df_test))
+test_MSEP_vec <- map_dbl(formulas, ~ compute_MSEP_test(.x, df_train, df_test))
 test_MSEP_vec
 ```
 
@@ -246,16 +237,14 @@ test_MSEP_vec
 -   Add at least two interaction terms that make sense to you
 
 ```{r}
-
 formula <- as.formula("total_costs ~ .")
 
-mod_mlr <- lm(formula, data = select(train_data, -fold) )
+mod_mlr <- lm(formula, data = select(train_data, -fold))
 
 summary(mod_mlr)
 ```
 
 ```{r}
-
 cv_error_lm <- kfold_cv_lm(train_data, formula)
 
 cv_error_lm
@@ -267,16 +256,15 @@ test_error_lm <- compute_MSEP_test(formula, train_data, df_test)
 test_error_lm
 ```
 
-## Multiple linear regression with interactions and transformations: ** NA coefficients
+## Multiple linear regression with interactions and transformations: 
 
 ```{r}
-formula <- 
-as.formula("total_costs ~ . - total_days - salaries + poly(total_days, 2, raw = TRUE) + poly(salaries, 2, raw = TRUE) + fte_employees_on_payroll*total_income + fte_employees_on_payroll*provider_bin_Specialized")
+formula <-
+  as.formula("total_costs ~ . - total_days - salaries + poly(total_days, 2, raw = TRUE) + poly(salaries, 2, raw = TRUE) + fte_employees_on_payroll*total_income + fte_employees_on_payroll*provider_bin_Specialized")
 
-mod_mlr <- lm(formula, data = select(train_data, -fold) )
+mod_mlr <- lm(formula, data = select(train_data, -fold))
 
 summary(mod_mlr)
-
 ```
 
 ```{r}
@@ -296,9 +284,10 @@ test_error_lm2
 
 ```{r}
 formula <- as.formula("total_costs ~ .")
-tree_train <- tree(formula, 
-             select(train_data, -fold)
-             )
+tree_train <- tree(
+  formula,
+  select(train_data, -fold)
+)
 
 # pruning -- find best size with cv
 set.seed(1)
@@ -309,9 +298,9 @@ cv_tree$size[which(cv_tree$dev == min(cv_tree$dev))]
 
 tree_pruned <- prune.tree(tree_train, best = 9)
 
-pred <- predict(tree_pruned, newdata = test_data )
+pred <- predict(tree_pruned, newdata = test_data)
 
-test_error_regtree <- mean( (test_data$total_costs - pred)^2 )
+test_error_regtree <- mean((test_data$total_costs - pred)^2)
 
 test_error_regtree
 ```
@@ -319,29 +308,28 @@ test_error_regtree
 10-fold CV: 
 
 ```{r}
-compute_MSEP_regtree <- function(train_data, formula, i){
+compute_MSEP_regtree <- function(train_data, formula, i) {
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
-  tree_train <- tree(formula, 
-             current_train_folds, 
-             )
-  
+
+  tree_train <- tree(
+    formula,
+    current_train_folds,
+  )
+
   tree_pruned <- prune.tree(tree_train, best = 9)
 
-  pred <- predict(tree_pruned, newdata = current_test_fold )
-    
-  MSEP <- mean( (current_test_fold$total_costs - pred) ^ 2 )
+  pred <- predict(tree_pruned, newdata = current_test_fold)
+
+  MSEP <- mean((current_test_fold$total_costs - pred)^2)
   return(MSEP)
 }
 
 
-kfold_cv_regtree <- function(train_data, formula, k = 10){
-  
-  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_regtree(train_data, formula, .x))
+kfold_cv_regtree <- function(train_data, formula, k = 10) {
+  MSEP_vec <- map_dbl(1:k, ~ compute_MSEP_regtree(train_data, formula, .x))
   avg_MSEP <- mean(MSEP_vec)
   return(avg_MSEP)
-  
 }
 
 cv_error_regtree <- kfold_cv_regtree(train_data, formula)
@@ -357,24 +345,25 @@ p <- ncol(train_data) - 2
 
 # Bagging
 set.seed(1)
-bag_train <- 
+bag_train <-
   randomForest(
-    formula, 
-    data = select(train_data, -fold), 
-    ntree = n_trees, 
-    mtry = p,            # m = p for bagging.
-    keep.forest = TRUE,  # not necessary, using to compute test errors for all trees.
-    importance = TRUE    # not necessary, compute importance of variables.
-    )
+    formula,
+    data = select(train_data, -fold),
+    ntree = n_trees,
+    mtry = p, # m = p for bagging.
+    keep.forest = TRUE, # not necessary, using to compute test errors for all trees.
+    importance = TRUE # not necessary, compute importance of variables.
+  )
 
 # Test errors:
 bag_pred <- predict(bag_train, test_data, predict.all = TRUE)
 
-bag_pred_avg <- map_dbl(1:nrow(test_data), 
-                                 ~mean(bag_pred$individual[.x,])
-                                 )
+bag_pred_avg <- map_dbl(
+  1:nrow(test_data),
+  ~ mean(bag_pred$individual[.x, ])
+)
 
-test_error_bag <- mean( (bag_pred_avg - test_data$total_costs)^2 )
+test_error_bag <- mean((bag_pred_avg - test_data$total_costs)^2)
 
 test_error_bag
 ```
@@ -386,114 +375,111 @@ importance(bag_train)
 10-fold CV:
 
 ```{r}
-compute_MSEP_bag <- function(train_data, formula, i){
+compute_MSEP_bag <- function(train_data, formula, i) {
   set.seed(i)
-  
+
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
+
   n_trees <- 300
   p <- ncol(current_train_folds) - 1
-  
-  bag_train <- 
+
+  bag_train <-
     randomForest(
-      formula, 
-      data = current_train_folds, 
-      ntree = n_trees, 
-      mtry = p,            # m = p for bagging.
-      keep.forest = TRUE,  # not necessary, using to compute test errors for all trees.
-      importance = TRUE    # not necessary, compute importance of variables.
+      formula,
+      data = current_train_folds,
+      ntree = n_trees,
+      mtry = p, # m = p for bagging.
+      keep.forest = TRUE, # not necessary, using to compute test errors for all trees.
+      importance = TRUE # not necessary, compute importance of variables.
     )
-  
+
   bag_pred <- predict(bag_train, current_test_fold, predict.all = TRUE)
 
-  bag_pred_avg <- map_dbl(1:nrow(current_test_fold), 
-                                 ~mean(bag_pred$individual[.x,])
-                                 )
-    
-  MSEP <- mean( (current_test_fold$total_costs - bag_pred_avg) ^ 2 )
+  bag_pred_avg <- map_dbl(
+    1:nrow(current_test_fold),
+    ~ mean(bag_pred$individual[.x, ])
+  )
+
+  MSEP <- mean((current_test_fold$total_costs - bag_pred_avg)^2)
   return(MSEP)
 }
 
 
-kfold_cv_bag <- function(train_data, formula, k = 10){
-  
-  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_bag(train_data, formula, .x))
+kfold_cv_bag <- function(train_data, formula, k = 10) {
+  MSEP_vec <- map_dbl(1:k, ~ compute_MSEP_bag(train_data, formula, .x))
   avg_MSEP <- mean(MSEP_vec)
   return(avg_MSEP)
-  
 }
 
 #cv_error_bag <- kfold_cv_bag(train_data, formula)
-cv_error_bag <- 0.07793828
+cv_error_bag <- 0.07086356
 ```
 
 ## Random Forest (with variable importance)
 
 ```{r}
-compute_error_rf <- function(train_data, formula, i){
-  
+compute_error_rf <- function(train_data, formula, i) {
   set.seed(i)
-  
+
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
+
   n_trees <- 300
-  
-  rf_train <- 
+
+  rf_train <-
     randomForest(
-      formula, 
-      data = current_train_folds, 
-      ntree = n_trees, 
-      keep.forest = TRUE,  # not necessary, using to compute test errors for all trees.
-      importance = TRUE    # not necessary, compute importance of variables.
+      formula,
+      data = current_train_folds,
+      ntree = n_trees,
+      keep.forest = TRUE, # not necessary, using to compute test errors for all trees.
+      importance = TRUE # not necessary, compute importance of variables.
     )
-  
+
   rf_pred <- predict(bag_train, current_test_fold, predict.all = TRUE)
 
-  rf_pred_avg <- map_dbl(1:nrow(current_test_fold), 
-                                 ~mean(rf_pred$individual[.x,])
-                                 )
-    
-  MSEP <- mean( (current_test_fold$total_costs - rf_pred_avg) ^ 2 )
+  rf_pred_avg <- map_dbl(
+    1:nrow(current_test_fold),
+    ~ mean(rf_pred$individual[.x, ])
+  )
+
+  MSEP <- mean((current_test_fold$total_costs - rf_pred_avg)^2)
   return(MSEP)
 }
 
 
-kfold_cv_rf <- function(train_data, formula, k = 10){
-  
-  error_vec <- map_dbl(1:k, ~compute_error_rf(train_data, formula, .x))
+kfold_cv_rf <- function(train_data, formula, k = 10) {
+  error_vec <- map_dbl(1:k, ~ compute_error_rf(train_data, formula, .x))
   avg_error <- mean(error_vec)
   return(avg_error)
-  
 }
 
-# cv_error_rf <- kfold_cv_rf(train_data, formula)
-cv_error_rf <- 0.01316977
+#cv_error_rf <- kfold_cv_rf(train_data, formula)
+cv_error_rf <- 0.01186113
 ```
 
 ```{r}
 set.seed(1)
-rf_train <- 
+rf_train <-
   randomForest(
-    formula, 
-    data = select(train_data, -fold), 
-    ntree = n_trees,            # m = p for bagging.
-    keep.forest = TRUE,  # not necessary, using to compute test errors for all trees.
-    importance = TRUE    # not necessary, compute importance of variables.
-    )
+    formula,
+    data = select(train_data, -fold),
+    ntree = n_trees, # m = p for bagging.
+    keep.forest = TRUE, # not necessary, using to compute test errors for all trees.
+    importance = TRUE # not necessary, compute importance of variables.
+  )
 
 # Test errors:
 rf_pred <- predict(rf_train, test_data, predict.all = TRUE)
 
-rf_pred_avg <- map_dbl(1:nrow(test_data), 
-                                 ~mean(rf_pred$individual[.x,])
-                                 )
+rf_pred_avg <- map_dbl(
+  1:nrow(test_data),
+  ~ mean(rf_pred$individual[.x, ])
+)
 
-test_error_rf <- mean( (rf_pred_avg - test_data$total_costs)^2 )
+test_error_rf <- mean((rf_pred_avg - test_data$total_costs)^2)
 
 test_error_rf
-
 ```
 
 ```{r}
@@ -506,38 +492,35 @@ importance(rf_train)
 Choose Tuning Paramter With CV:
 
 ```{r}
-compute_error_boost <- function(train_data, formula, lambda, i){
-  
+compute_error_boost <- function(train_data, formula, lambda, i) {
   set.seed(i)
-  
+
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
+
   n_trees <- 300
-  d1 = 1
-  
-  boost_train <- 
-  gbm(
-    formula, 
-    data = current_train_folds, 
-    n.trees = n_trees, 
-    interaction.depth = d1, 
-    shrinkage = lambda
+  d1 <- 1
+
+  boost_train <-
+    gbm(
+      formula,
+      data = current_train_folds,
+      n.trees = n_trees,
+      interaction.depth = d1,
+      shrinkage = lambda
     )
-  
+
   boost_pred <- predict(boost_train, current_test_fold, n.trees = n_trees)
-    
-  MSEP <- mean( (current_test_fold$total_costs - boost_pred) ^ 2 )
+
+  MSEP <- mean((current_test_fold$total_costs - boost_pred)^2)
   return(MSEP)
 }
 
 
-kfold_cv_boost <- function(train_data, formula, lambda, k = 10){
-  
-  error_vec <- map_dbl(1:k, ~compute_error_boost(train_data, formula, lambda, .x))
+kfold_cv_boost <- function(train_data, formula, lambda, k = 10) {
+  error_vec <- map_dbl(1:k, ~ compute_error_boost(train_data, formula, lambda, .x))
   avg_error <- mean(error_vec)
   return(avg_error)
-  
 }
 
 lambda_grid <- seq(0, 3, by = 0.1)
@@ -551,28 +534,28 @@ optimal_lambda <- 0.1
 #cv_error_rate_optimal_lambda <- min(cv_error_rates)
 #cv_error_rate_optimal_lambda
 
-cv_error_rate_optimal_lambda <- 0.08466906
+cv_error_rate_optimal_lambda <- 0.09249563
 
 cv_error_boost <- cv_error_rate_optimal_lambda
 ```
 
 
 ```{r}
-d1 = 1
+d1 <- 1
 
-boost_train <- 
+boost_train <-
   gbm(
-    formula, 
-    data = select(train_data, -fold), 
-    n.trees = n_trees, 
-    interaction.depth = d1, 
+    formula,
+    data = select(train_data, -fold),
+    n.trees = n_trees,
+    interaction.depth = d1,
     shrinkage = optimal_lambda
-    )
+  )
 
 # Test errors:
 boost_pred <- predict(boost_train, test_data, n.trees = n_trees)
 
-test_error_boost <- mean( (boost_pred - test_data$total_costs)^2 )
+test_error_boost <- mean((boost_pred - test_data$total_costs)^2)
 
 test_error_boost
 ```
@@ -589,8 +572,10 @@ nvmax <- 12
 
 
 ```{r}
-regfit_best <- regsubsets(total_costs ~ ., data = select(train_data, -fold),
-                          nvmax = nvmax)
+regfit_best <- regsubsets(total_costs ~ .,
+  data = select(train_data, -fold),
+  nvmax = nvmax
+)
 summary_regfit <- summary(regfit_best)
 summary_regfit
 ```
@@ -599,13 +584,13 @@ summary_regfit
 
 ```{r}
 response <- "total_costs"
-m <- summary_regfit$which[,-1]
+m <- summary_regfit$which[, -1]
 predictor_names <- colnames(predictors)
-#colnames(m) <- predictor_names
-rhs <- map_chr(1:12, ~str_c(predictor_names[m[.x, ]], collapse = " + "))
+# colnames(m) <- predictor_names
+rhs <- map_chr(1:12, ~ str_c(predictor_names[m[.x, ]], collapse = " + "))
 formulas <- str_c(response, " ~ ", rhs)
 
-cv_error_vec <- map_dbl( formulas, ~kfold_cv_lm(train_data, formula = .x, k = 10) )
+cv_error_vec <- map_dbl(formulas, ~ kfold_cv_lm(train_data, formula = .x, k = 10))
 cv_error_vec
 
 optimal_size <- which(cv_error_vec == min(cv_error_vec))
@@ -639,8 +624,10 @@ test_error_bsub
 
 ```{r}
 # Forward stepwise selection -----
-regfit_fwd <- regsubsets(total_costs ~ ., data = select(train_data, -fold),
-                         nvmax = nvmax, method = "forward")
+regfit_fwd <- regsubsets(total_costs ~ .,
+  data = select(train_data, -fold),
+  nvmax = nvmax, method = "forward"
+)
 summary_regfit <- summary(regfit_fwd)
 summary_regfit
 ```
@@ -649,13 +636,13 @@ summary_regfit
 
 ```{r}
 response <- "total_costs"
-m <- summary_regfit$which[,-1]
+m <- summary_regfit$which[, -1]
 predictor_names <- colnames(predictors)
-#colnames(m) <- predictor_names
-rhs <- map_chr(1:12, ~str_c(predictor_names[m[.x, ]], collapse = " + "))
+# colnames(m) <- predictor_names
+rhs <- map_chr(1:12, ~ str_c(predictor_names[m[.x, ]], collapse = " + "))
 formulas <- str_c(response, " ~ ", rhs)
 
-cv_error_vec <- map_dbl( formulas, ~kfold_cv_lm(train_data, formula = .x, k = 10) )
+cv_error_vec <- map_dbl(formulas, ~ kfold_cv_lm(train_data, formula = .x, k = 10))
 cv_error_vec
 
 optimal_size <- which(cv_error_vec == min(cv_error_vec))
@@ -688,11 +675,11 @@ test_error_fwd
 
 ```{r}
 # Backward stepwise selection -----
-regfit_bwd <- regsubsets(total_costs ~ ., 
-                         data = select(train_data, -fold), 
-                         nvmax = nvmax, 
-                         method = "backward"
-                         )
+regfit_bwd <- regsubsets(total_costs ~ .,
+  data = select(train_data, -fold),
+  nvmax = nvmax,
+  method = "backward"
+)
 summary_regfit <- summary(regfit_bwd)
 summary_regfit
 ```
@@ -701,13 +688,13 @@ summary_regfit
 
 ```{r}
 response <- "total_costs"
-m <- summary_regfit$which[,-1]
+m <- summary_regfit$which[, -1]
 predictor_names <- colnames(predictors)
-#colnames(m) <- predictor_names
-rhs <- map_chr(1:12, ~str_c(predictor_names[m[.x, ]], collapse = " + "))
+# colnames(m) <- predictor_names
+rhs <- map_chr(1:12, ~ str_c(predictor_names[m[.x, ]], collapse = " + "))
 formulas <- str_c(response, " ~ ", rhs)
 
-cv_error_vec <- map_dbl( formulas, ~kfold_cv_lm(train_data, formula = .x, k = 10) )
+cv_error_vec <- map_dbl(formulas, ~ kfold_cv_lm(train_data, formula = .x, k = 10))
 cv_error_vec
 
 optimal_size <- which(cv_error_vec == min(cv_error_vec))
@@ -740,10 +727,10 @@ test_error_bwd
 ## Ridge regression (find the best tuning parameter using cross-validation)
 
 ```{r}
-x_train <- model.matrix(total_costs ~ . - fold, data = train_data)[ , -1]
+x_train <- model.matrix(total_costs ~ . - fold, data = train_data)[, -1]
 y_train <- train_data$total_costs
 
-x_test <- model.matrix(total_costs ~ ., data = test_data)[ , -1]
+x_test <- model.matrix(total_costs ~ ., data = test_data)[, -1]
 y_test <- test_data$total_costs
 ```
 
@@ -751,16 +738,16 @@ y_test <- test_data$total_costs
 ```{r}
 set.seed(1)
 
-lambda_grid <- 10 ^ seq(10, -2, length = 100)
-cv_ridge <- 
+lambda_grid <- 10^seq(10, -2, length = 100)
+cv_ridge <-
   cv.glmnet(
     x_train,
     y_train,
     alpha = 0,
     lambda = lambda_grid,
     type.measure = "mse",
-    nfolds = 10        # Set the number of folds to n to get LOOCV
-    )
+    nfolds = 10 # Set the number of folds to n to get LOOCV
+  )
 
 cv_ridge$lambda.min
 
@@ -775,7 +762,7 @@ coef(ridge_reg)
 ```{r}
 pred_ridge <- predict(ridge_reg, newx = x_test)
 
-test_error_ridge <- mean( (y_test - pred_ridge) ^ 2 )
+test_error_ridge <- mean((y_test - pred_ridge)^2)
 
 test_error_ridge
 ```
@@ -783,31 +770,29 @@ test_error_ridge
 10-fold CV:
 
 ```{r}
-compute_MSEP_ridge <- function(train_data, lambda, alpha, i){
+compute_MSEP_ridge <- function(train_data, lambda, alpha, i) {
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
-  x_train <- model.matrix(total_costs ~ ., data = current_train_folds)[ , -1]
+
+  x_train <- model.matrix(total_costs ~ ., data = current_train_folds)[, -1]
   y_train <- current_train_folds$total_costs
 
-  x_test <- model.matrix(total_costs ~ ., data = current_test_fold)[ , -1]
+  x_test <- model.matrix(total_costs ~ ., data = current_test_fold)[, -1]
   y_test <- current_test_fold$total_costs
-    
+
   ridge_reg <- glmnet(x_train, y_train, alpha = alpha, lambda = lambda)
   pred_ridge <- predict(ridge_reg, newx = x_test)
-    
-  MSEP <- mean( (current_test_fold$total_costs - pred_ridge) ^ 2 )
+
+  MSEP <- mean((current_test_fold$total_costs - pred_ridge)^2)
   return(MSEP)
 }
 
-#compute_MSEP_lm(train_data, formula, i)
+# compute_MSEP_lm(train_data, formula, i)
 
-kfold_cv_ridge <- function(train_data, lambda, alpha, k = 10){
-  
-  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_ridge(train_data, lambda, alpha, .x))
+kfold_cv_ridge <- function(train_data, lambda, alpha, k = 10) {
+  MSEP_vec <- map_dbl(1:k, ~ compute_MSEP_ridge(train_data, lambda, alpha, .x))
   avg_MSEP <- mean(MSEP_vec)
   return(avg_MSEP)
-  
 }
 
 cv_error_ridge <- kfold_cv_ridge(train_data, lambda_min, alpha = 0)
@@ -821,28 +806,27 @@ cv_error_ridge
 given_sample <- train_data |> select(-fold)
 
 # function to compute bootstrap estimate of SE
-compute_bootstrap_est <- function(given_sample, lambda_min, b){
-  
+compute_bootstrap_est <- function(given_sample, lambda_min, b) {
   set.seed(b)
-  
+
   n <- nrow(given_sample)
-  
+
   bootstrap_sample_idx <- sample(n, replace = TRUE)
   Z <- given_sample[bootstrap_sample_idx, , drop = F]
-  x_b <- model.matrix(total_costs ~ ., data = Z)[ , -1]
+  x_b <- model.matrix(total_costs ~ ., data = Z)[, -1]
   y_b <- Z$total_costs
   modb <- glmnet(x_b, y_b, alpha = 0, lambda = lambda_min)
   est_coef_ridge <- coef(modb)
-  est_coef_ridge_mat <- t(as.matrix(est_coef_ridge))[ , -1]
-  
+  est_coef_ridge_mat <- t(as.matrix(est_coef_ridge))[, -1]
+
   return(data.frame(as.list(est_coef_ridge_mat)))
 }
 
 # number of times to repeat bootstrap
-B = 1000
+B <- 1000
 
 # compute 1000 bootstrap estimates
-boot_ests <- map_dfr(1:B, ~compute_bootstrap_est(given_sample, lambda_min, .x))
+boot_ests <- map_dfr(1:B, ~ compute_bootstrap_est(given_sample, lambda_min, .x))
 
 # compute standard error of bootstrap estimates
 SE_boot <- map_dbl(boot_ests, sd)
@@ -854,7 +838,7 @@ SE_boot
 # compare to multiple regression
 formula <- as.formula("total_costs ~ .")
 
-mod_mlr <- lm(formula, data = select(train_data, -fold) )
+mod_mlr <- lm(formula, data = select(train_data, -fold))
 
 SE_ols <- coef(summary(mod_mlr))[, "Std. Error"][-1]
 
@@ -867,10 +851,11 @@ data_plot <- tibble(SE_boot, SE_ols)
 
 ggplot(data_plot, aes(x = SE_boot, y = SE_ols)) +
   geom_point() +
-  labs(title = "Ridge Versus OLS Standard Errors",
-       x = "Ridge (bootstrap) SE",
-       y = "OLS SE"
-       )
+  labs(
+    title = "Ridge Versus OLS Standard Errors",
+    x = "Ridge (bootstrap) SE",
+    y = "OLS SE"
+  )
 ```
 
 
@@ -878,22 +863,21 @@ ggplot(data_plot, aes(x = SE_boot, y = SE_ols)) +
 ## Lasso (find the best tuning parameter using cross-validation)
 
 ```{r}
-
 set.seed(1)
 
 # fit lasso model
-lambda_grid <- 10 ^ seq(10, -2, length = 100)
+lambda_grid <- 10^seq(10, -2, length = 100)
 
 # 10-fold cross validation to choose tuning parameter
-cv_lasso <- 
+cv_lasso <-
   cv.glmnet(
     x_train,
     y_train,
     alpha = 1,
     lambda = lambda_grid,
     type.measure = "mse",
-    nfolds = 10        # Set the number of folds to n to get LOOCV
-    )
+    nfolds = 10 # Set the number of folds to n to get LOOCV
+  )
 
 lambda_min <- cv_lasso$lambda.min
 lambda_min
@@ -909,7 +893,7 @@ coef(lasso_bestlambda)
 ```{r}
 pred_lasso <- predict(lasso_bestlambda, newx = x_test)
 
-test_error_lasso <- mean( (y_test - pred_lasso) ^ 2 )
+test_error_lasso <- mean((y_test - pred_lasso)^2)
 
 test_error_lasso
 ```
@@ -926,11 +910,11 @@ cv_error_lasso
 
 
 ```{r}
-pcr_fit <- pcr(total_costs ~ ., 
-               data = select(train_data, -fold),
-               validation = "CV", 
-               segments = 10
-               )
+pcr_fit <- pcr(total_costs ~ .,
+  data = select(train_data, -fold),
+  validation = "CV",
+  segments = 10
+)
 summary(pcr_fit)
 ```
 
@@ -941,7 +925,7 @@ validationplot(pcr_fit, val.type = "MSEP")
 ```{r}
 pred_test <- predict(pcr_fit, test_data, ncomp = 5)
 
-test_error_pcr = mean( (test_data$total_costs - pred_test)^2 )
+test_error_pcr <- mean((test_data$total_costs - pred_test)^2)
 
 test_error_pcr
 ```
@@ -949,30 +933,28 @@ test_error_pcr
 10-fold CV:
 
 ```{r}
-compute_MSEP_pcr <- function(train_data, i){
+compute_MSEP_pcr <- function(train_data, i) {
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
-  pcr_fit <- pcr(total_costs ~ ., 
-               data = current_train_folds,
-               validation = "CV", 
-               segments = 10
-               )
-  
+
+  pcr_fit <- pcr(total_costs ~ .,
+    data = current_train_folds,
+    validation = "CV",
+    segments = 10
+  )
+
   pred <- predict(pcr_fit, current_test_fold, ncomp = 5)
-    
-  MSEP <- mean( (current_test_fold$total_costs - pred) ^ 2 )
+
+  MSEP <- mean((current_test_fold$total_costs - pred)^2)
   return(MSEP)
 }
 
-#compute_MSEP_lm(train_data, formula, i)
+# compute_MSEP_lm(train_data, formula, i)
 
-kfold_cv_pcr <- function(train_data, k = 10){
-  
-  MSEP_vec <- map_dbl(1:k, ~compute_MSEP_pcr(train_data, .x))
+kfold_cv_pcr <- function(train_data, k = 10) {
+  MSEP_vec <- map_dbl(1:k, ~ compute_MSEP_pcr(train_data, .x))
   avg_MSEP <- mean(MSEP_vec)
   return(avg_MSEP)
-  
 }
 
 cv_error_pcr <- kfold_cv_pcr(train_data)
@@ -983,19 +965,25 @@ cv_error_pcr
 # Summary Table Quant Outcome
 
 ```{r}
-method <- c("Linear Regression (Main Effects)", "Linear Regression (Transformations)",
-            "Best Subset", "Forward Stepwise", "Backward Stepwise", "Ridge", "Lasso", "PCR", "Regression Tree", "Bagging", "Random Forest", "Boosting")
+method <- c(
+  "Linear Regression (Main Effects)", "Linear Regression (Transformations)",
+  "Best Subset", "Forward Stepwise", "Backward Stepwise", "Ridge", "Lasso", "PCR", "Regression Tree", "Bagging", "Random Forest", "Boosting"
+)
 
-cv_error <- c(cv_error_lm, cv_error_lm2, cv_error_bsub, cv_error_fwd, 
-              cv_error_bwd, cv_error_ridge, cv_error_lasso, cv_error_pcr,
-              cv_error_regtree, cv_error_bag, cv_error_rf, cv_error_boost)
+cv_error <- c(
+  cv_error_lm, cv_error_lm2, cv_error_bsub, cv_error_fwd,
+  cv_error_bwd, cv_error_ridge, cv_error_lasso, cv_error_pcr,
+  cv_error_regtree, cv_error_bag, cv_error_rf, cv_error_boost
+)
 
-test_error <- c(test_error_lm, test_error_lm2, test_error_bsub, test_error_fwd, 
-              test_error_bwd, test_error_ridge, test_error_lasso, test_error_pcr,
-              test_error_regtree, test_error_bag, test_error_rf, test_error_boost)
+test_error <- c(
+  test_error_lm, test_error_lm2, test_error_bsub, test_error_fwd,
+  test_error_bwd, test_error_ridge, test_error_lasso, test_error_pcr,
+  test_error_regtree, test_error_bag, test_error_rf, test_error_boost
+)
 
-error_summary <- tibble(method, cv_error, test_error) |> 
-  mutate_if(is.numeric, ~round(.x, 3))
+error_summary <- tibble(method, cv_error, test_error) |>
+  mutate_if(is.numeric, ~ round(.x, 3))
 
 knitr::kable(error_summary)
 ```
@@ -1006,23 +994,23 @@ knitr::kable(error_summary)
 
 ```{r}
 confusion_matrix <- function(pred, true_values) {
-  true_positives <- sum( (pred == 1) & (true_values == 1) )
-  false_positives <- sum( (pred == 1) & (true_values == 0) )
-  true_negatives <- sum( (pred == 0) & (true_values == 0) )
-  false_negatives <- sum( (pred == 0) & (true_values == 1) )
-  
+  true_positives <- sum((pred == 1) & (true_values == 1))
+  false_positives <- sum((pred == 1) & (true_values == 0))
+  true_negatives <- sum((pred == 0) & (true_values == 0))
+  false_negatives <- sum((pred == 0) & (true_values == 1))
+
   all_negatives <- sum(true_values == 0)
   all_positives <- sum(true_values == 1)
-  
-  fpr <- false_positives/all_negatives
-  fnr <- false_negatives/all_positives
-  tpr <- true_positives/all_positives
-  tnr <- true_negatives/all_negatives
-  
+
+  fpr <- false_positives / all_negatives
+  fnr <- false_negatives / all_positives
+  tpr <- true_positives / all_positives
+  tnr <- true_negatives / all_negatives
+
   result <- c(fpr, fnr, tpr, tnr)
-  
+
   names(result) <- c("False Positive Rate", "False Negative Rate", "True Positive Rate", "True Negative Rate")
-  
+
   return(result)
 }
 ```
@@ -1040,14 +1028,13 @@ test_data <- df_test |> select(-c(total_costs))
 Choose optimal number of nearest neighbors, c, using CV: 
 
 ```{r}
-compute_error_knn <- function(train_data, i, c){
-  
+compute_error_knn <- function(train_data, i, c) {
   set.seed(i)
-  
+
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
-  knn_pred <- 
+
+  knn_pred <-
     knn(
       train = select(current_train_folds, -costs_bin),
       test = select(current_test_fold, -c(costs_bin)),
@@ -1055,23 +1042,21 @@ compute_error_knn <- function(train_data, i, c){
       k = c,
       prob = TRUE
     )
-    
-  error <- mean( (current_test_fold$costs_bin != knn_pred)  )
+
+  error <- mean((current_test_fold$costs_bin != knn_pred))
   return(error)
 }
 
 
-kfold_cv_knn <- function(train_data, k = 10, c){
-  
-  error_vec <- map_dbl(1:k, ~compute_error_knn(train_data, .x, c))
+kfold_cv_knn <- function(train_data, k = 10, c) {
+  error_vec <- map_dbl(1:k, ~ compute_error_knn(train_data, .x, c))
   avg_error <- mean(error_vec)
   return(avg_error)
-  
 }
 
 c_values <- 1:100
 
-cv_error_rates <- map_dbl(c_values, ~kfold_cv_knn(train_data, k = 10, c = .x))
+cv_error_rates <- map_dbl(c_values, ~ kfold_cv_knn(train_data, k = 10, c = .x))
 
 optimal_c <- which(cv_error_rates == min(cv_error_rates))
 
@@ -1088,19 +1073,18 @@ Fit model with optimal number of nearest neighbors, c = 17:
 ```{r}
 set.seed(1)
 
-knn_pred <- 
-    knn(
-      train = select(df_train, -c(total_costs, costs_bin, fold)),
-      test = select(df_test, -c(total_costs, costs_bin)),
-      cl = df_train$costs_bin,
-      k = optimal_c,
-      prob = TRUE
-    )
+knn_pred <-
+  knn(
+    train = select(df_train, -c(total_costs, costs_bin, fold)),
+    test = select(df_test, -c(total_costs, costs_bin)),
+    cl = df_train$costs_bin,
+    k = optimal_c,
+    prob = TRUE
+  )
 
 test_error_knn <- mean(test_data$costs_bin != knn_pred)
 
 test_error_knn
-
 ```
 
 ```{r}
@@ -1115,22 +1099,21 @@ cm_knn
 -   Add at least two interaction terms that make sense to you
 
 ```{r}
-
 formula <- as.formula("costs_bin ~ .")
 
-mod_mlogr <- glm(formula, 
-                 data = train_data |> select(-fold), 
-                 family = binomial(link = "logit")
-                 )
+mod_mlogr <- glm(formula,
+  data = train_data |> select(-fold),
+  family = binomial(link = "logit")
+)
 
 summary(mod_mlogr)
 ```
 
 ```{r}
-log_pred <- predict( mod_mlogr, 
-                     newdata = select( test_data, -c(costs_bin) ), 
-                     type = "response" 
-                     )
+log_pred <- predict(mod_mlogr,
+  newdata = select(test_data, -c(costs_bin)),
+  type = "response"
+)
 
 pred_class <- ifelse(log_pred >= 0.5, 1, 0)
 
@@ -1140,38 +1123,35 @@ test_error_logistic
 ```
 
 ```{r}
-compute_error_logistic <- function(train_data, formula, i){
-  
+compute_error_logistic <- function(train_data, formula, i) {
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
-  mod_mlogr <- glm(formula, 
-                 data = current_train_folds, 
-                 family = binomial(link = "logit")
-                 )
-  
-  log_pred <- predict(mod_mlogr, 
-                     newdata = current_test_fold |> select(-costs_bin) , 
-                     type = "response" 
-                     )
+
+  mod_mlogr <- glm(formula,
+    data = current_train_folds,
+    family = binomial(link = "logit")
+  )
+
+  log_pred <- predict(mod_mlogr,
+    newdata = current_test_fold |> select(-costs_bin),
+    type = "response"
+  )
 
   pred_class <- ifelse(log_pred >= 0.5, 1, 0)
-    
-  error <- mean( (current_test_fold$costs_bin != pred_class)  )
+
+  error <- mean((current_test_fold$costs_bin != pred_class))
   return(error)
 }
 
 compute_error_logistic(train_data, formula, 1)
 
 
-#compute_MSEP_lm(train_data, formula, i)
+# compute_MSEP_lm(train_data, formula, i)
 
-kfold_cv_logistic <- function(train_data, formula, k = 10){
-  
-  error_vec <- map_dbl(1:k, ~compute_error_logistic(train_data, formula, .x))
+kfold_cv_logistic <- function(train_data, formula, k = 10) {
+  error_vec <- map_dbl(1:k, ~ compute_error_logistic(train_data, formula, .x))
   avg_error <- mean(error_vec)
   return(avg_error)
-  
 }
 
 cv_error_logistic <- kfold_cv_logistic(train_data, formula)
@@ -1186,24 +1166,23 @@ cm_logistic
 ## Multiple logistic regression with Transformations and Interactions
 
 ```{r}
-formula <- 
-as.formula("costs_bin ~ . - total_days - salaries + poly(total_days, 2, raw = TRUE) + poly(salaries, 2, raw = TRUE) + fte_employees_on_payroll*total_income + fte_employees_on_payroll*provider_bin_Specialized")
+formula <-
+  as.formula("costs_bin ~ . - total_days - salaries + poly(total_days, 2, raw = TRUE) + poly(salaries, 2, raw = TRUE) + fte_employees_on_payroll*total_income + fte_employees_on_payroll*provider_bin_Specialized")
 
-mod_mlogr <- glm(formula, 
-                 data = train_data |> select(-fold), 
-                 family = binomial(link = "logit")
-                 )
+mod_mlogr <- glm(formula,
+  data = train_data |> select(-fold),
+  family = binomial(link = "logit")
+)
 
 summary(mod_mlogr)
-
 ```
 
 
 ```{r}
-log_pred <- predict( mod_mlogr, 
-                     newdata = select( test_data, -c(costs_bin) ), 
-                     type = "response" 
-                     )
+log_pred <- predict(mod_mlogr,
+  newdata = select(test_data, -c(costs_bin)),
+  type = "response"
+)
 
 pred_class <- ifelse(log_pred >= 0.5, 1, 0)
 
@@ -1226,12 +1205,11 @@ cm_logistic2
 ## LDA
 
 ```{r}
-
 formula <- as.formula("costs_bin ~ .")
 
 mod_lda <- MASS::lda(costs_bin ~ ., data = select(train_data, -fold))
 
-lda_pred <- predict( mod_lda, newdata = select( df_test, -c(costs_bin, total_costs) ) )$class
+lda_pred <- predict(mod_lda, newdata = select(df_test, -c(costs_bin, total_costs)))$class
 
 test_error_lda <- mean(df_test$costs_bin != lda_pred)
 
@@ -1241,26 +1219,23 @@ test_error_lda
 10-fold CV: 
 
 ```{r}
-compute_error_lda <- function(train_data, formula, i){
-  
+compute_error_lda <- function(train_data, formula, i) {
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
+
   mod_lda <- MASS::lda(formula, data = current_train_folds)
-  
-  lda_pred <- predict( mod_lda, newdata = select( current_test_fold, -c(costs_bin) ) )$class
-    
-  error <- mean( (current_test_fold$costs_bin != lda_pred)  )
+
+  lda_pred <- predict(mod_lda, newdata = select(current_test_fold, -c(costs_bin)))$class
+
+  error <- mean((current_test_fold$costs_bin != lda_pred))
   return(error)
 }
 
 
-kfold_cv_lda <- function(train_data, formula, k = 10){
-  
-  error_vec <- map_dbl(1:k, ~compute_error_lda(train_data, formula, .x))
+kfold_cv_lda <- function(train_data, formula, k = 10) {
+  error_vec <- map_dbl(1:k, ~ compute_error_lda(train_data, formula, .x))
   avg_error <- mean(error_vec)
   return(avg_error)
-  
 }
 
 cv_error_lda <- kfold_cv_lda(train_data, formula)
@@ -1278,10 +1253,9 @@ cm_lda
 ## QDA
 
 ```{r}
-
 mod_qda <- MASS::qda(costs_bin ~ ., data = select(train_data, -fold))
 
-qda_pred <- predict( mod_qda, newdata = select( df_test, -c(costs_bin, total_costs) ) )$class
+qda_pred <- predict(mod_qda, newdata = select(df_test, -c(costs_bin, total_costs)))$class
 
 test_error_qda <- mean(df_test$costs_bin != qda_pred)
 
@@ -1291,26 +1265,23 @@ test_error_qda
 10-fold CV: 
 
 ```{r}
-compute_error_qda <- function(train_data, formula, i){
-  
+compute_error_qda <- function(train_data, formula, i) {
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
+
   mod_qda <- MASS::qda(formula, data = current_train_folds)
-  
-  qda_pred <- predict( mod_qda, newdata = select( current_test_fold, -c(costs_bin) ) )$class
-    
-  error <- mean( (current_test_fold$costs_bin != qda_pred)  )
+
+  qda_pred <- predict(mod_qda, newdata = select(current_test_fold, -c(costs_bin)))$class
+
+  error <- mean((current_test_fold$costs_bin != qda_pred))
   return(error)
 }
 
 
-kfold_cv_qda <- function(train_data, formula, k = 10){
-  
-  error_vec <- map_dbl(1:k, ~compute_error_qda(train_data, formula, .x))
+kfold_cv_qda <- function(train_data, formula, k = 10) {
+  error_vec <- map_dbl(1:k, ~ compute_error_qda(train_data, formula, .x))
   avg_error <- mean(error_vec)
   return(avg_error)
-  
 }
 
 cv_error_qda <- kfold_cv_qda(train_data, formula)
@@ -1332,7 +1303,7 @@ cm_qda
 ```{r}
 nb_gaussian <- e1071::naiveBayes(costs_bin ~ ., data = select(train_data, -fold))
 
-nb_pred <- predict(nb_gaussian, newdata = select( df_test, -c(costs_bin, total_costs) ) )
+nb_pred <- predict(nb_gaussian, newdata = select(df_test, -c(costs_bin, total_costs)))
 
 test_error_nb <- mean(df_test$costs_bin != nb_pred)
 
@@ -1342,26 +1313,23 @@ test_error_nb
 10-fold CV: 
 
 ```{r}
-compute_error_nb <- function(train_data, formula, i){
-  
+compute_error_nb <- function(train_data, formula, i) {
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
+
   mod_nb <- e1071::naiveBayes(formula, data = current_train_folds)
-  
-  nb_pred <- predict( mod_nb, newdata = select( current_test_fold, -c(costs_bin) ) )
-    
-  error <- mean( (current_test_fold$costs_bin != nb_pred)  )
+
+  nb_pred <- predict(mod_nb, newdata = select(current_test_fold, -c(costs_bin)))
+
+  error <- mean((current_test_fold$costs_bin != nb_pred))
   return(error)
 }
 
 
-kfold_cv_nb <- function(train_data, formula, k = 10){
-  
-  error_vec <- map_dbl(1:k, ~compute_error_nb(train_data, formula, .x))
+kfold_cv_nb <- function(train_data, formula, k = 10) {
+  error_vec <- map_dbl(1:k, ~ compute_error_nb(train_data, formula, .x))
   avg_error <- mean(error_vec)
   return(avg_error)
-  
 }
 
 cv_error_nb <- kfold_cv_nb(train_data, formula)
@@ -1380,59 +1348,59 @@ cm_nb
 ```{r}
 predictor_matrix <- as.matrix(predictors)
 
-test_matrix <- df_test |> 
-  select( -c(costs_bin, total_costs) ) |> 
+test_matrix <- df_test |>
+  select(-c(costs_bin, total_costs)) |>
   as.matrix()
 
 nb_KDE <-
   nonparametric_naive_bayes(
     y = as.factor(df_train %>% pull(costs_bin)),
     x = predictor_matrix
-    )
+  )
 
-nb_kde_pred <- predict(nb_KDE, newdata = test_matrix )
+nb_kde_pred <- predict(nb_KDE, newdata = test_matrix)
 
 test_error_nb_kde <- mean(df_test$costs_bin != nb_kde_pred)
 
 test_error_nb_kde
-
 ```
 
 10-fold CV:
 
 ```{r}
-compute_error_nb_kde <- function(train_data, formula, i){
-  
+compute_error_nb_kde <- function(train_data, formula, i) {
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
-  current_train_x <- current_train_folds |> select(-costs_bin) |> as.matrix()
-  
-  current_train_y = current_train_folds$costs_bin
-  
-  current_test_x <- current_test_fold |> select(-costs_bin) |> as.matrix()
-  
-  current_test_y = current_test_fold$costs_bin
-  
+
+  current_train_x <- current_train_folds |>
+    select(-costs_bin) |>
+    as.matrix()
+
+  current_train_y <- current_train_folds$costs_bin
+
+  current_test_x <- current_test_fold |>
+    select(-costs_bin) |>
+    as.matrix()
+
+  current_test_y <- current_test_fold$costs_bin
+
   nb_KDE <-
-  nonparametric_naive_bayes(
-    y = as.factor(current_train_y),
-    x = current_train_x
+    nonparametric_naive_bayes(
+      y = as.factor(current_train_y),
+      x = current_train_x
     )
-  
-  nb_kde_pred <- predict(nb_KDE, newdata = current_test_x )
-    
-  error <- mean( (current_test_y != nb_kde_pred)  )
+
+  nb_kde_pred <- predict(nb_KDE, newdata = current_test_x)
+
+  error <- mean((current_test_y != nb_kde_pred))
   return(error)
 }
 
 
-kfold_cv_nb_kde <- function(train_data, formula, k = 10){
-  
-  error_vec <- map_dbl(1:k, ~compute_error_nb_kde(train_data, formula, .x))
+kfold_cv_nb_kde <- function(train_data, formula, k = 10) {
+  error_vec <- map_dbl(1:k, ~ compute_error_nb_kde(train_data, formula, .x))
   avg_error <- mean(error_vec)
   return(avg_error)
-  
 }
 
 cv_error_nb_kde <- kfold_cv_nb_kde(train_data, formula)
@@ -1454,10 +1422,10 @@ rhs <- str_c(predictor_names, collapse = "+")
 
 formula <- as.formula(str_c("costs_bin ~", rhs))
 
-mod_null <- glm(costs_bin ~ 1, 
-                 data = train_data |> select(-fold), 
-                 family = binomial(link = "logit")
-                 )
+mod_null <- glm(costs_bin ~ 1,
+  data = train_data |> select(-fold),
+  family = binomial(link = "logit")
+)
 
 m.forward <- step(mod_null, scope = formula, direction = "forward")
 
@@ -1465,10 +1433,10 @@ summary(m.forward)
 ```
 
 ```{r}
-fwd_pred <- predict( m.forward, 
-                     newdata = select( test_data, -c(costs_bin) ), 
-                     type = "response" 
-                     )
+fwd_pred <- predict(m.forward,
+  newdata = select(test_data, -c(costs_bin)),
+  type = "response"
+)
 
 pred_class <- ifelse(fwd_pred >= 0.5, 1, 0)
 
@@ -1501,10 +1469,10 @@ summary(m.backward)
 ```
 
 ```{r}
-bwd_pred <- predict( m.backward, 
-                     newdata = select( test_data, -c(costs_bin) ), 
-                     type = "response" 
-                     )
+bwd_pred <- predict(m.backward,
+  newdata = select(test_data, -c(costs_bin)),
+  type = "response"
+)
 
 pred_class <- ifelse(bwd_pred >= 0.5, 1, 0)
 
@@ -1529,11 +1497,10 @@ cm_bwd_bin
 ## Ridge regression (find the best tuning parameter using cross-validation)
 
 ```{r}
-
-x_train <- model.matrix(costs_bin ~ . - fold, data = train_data)[ , -1]
+x_train <- model.matrix(costs_bin ~ . - fold, data = train_data)[, -1]
 y_train <- train_data$costs_bin
 
-x_test <- model.matrix(costs_bin ~ ., data = test_data)[ , -1]
+x_test <- model.matrix(costs_bin ~ ., data = test_data)[, -1]
 y_test <- test_data$costs_bin
 ```
 
@@ -1541,16 +1508,16 @@ y_test <- test_data$costs_bin
 ```{r}
 set.seed(1)
 
-lambda_grid <- 10 ^ seq(10, -2, length = 100)
-cv_ridge <- 
+lambda_grid <- 10^seq(10, -2, length = 100)
+cv_ridge <-
   cv.glmnet(
     x_train,
     y_train,
     alpha = 0,
     lambda = lambda_grid,
-    family = 'binomial',
-    nfolds = 10        
-    )
+    family = "binomial",
+    nfolds = 10
+  )
 
 cv_ridge$lambda.min
 
@@ -1558,7 +1525,7 @@ lambda_min <- cv_ridge$lambda.min
 ```
 
 ```{r}
-ridge_reg <- glmnet(x_train, y_train, alpha = 0, family = 'binomial', lambda = lambda_min)
+ridge_reg <- glmnet(x_train, y_train, alpha = 0, family = "binomial", lambda = lambda_min)
 coef(ridge_reg)
 ```
 
@@ -1567,7 +1534,7 @@ pred_ridge <- predict(ridge_reg, newx = x_test, type = "response")
 
 pred_class <- ifelse(pred_ridge >= 0.5, 1, 0)
 
-test_error_ridge_bin <- mean( y_test !=  pred_class )
+test_error_ridge_bin <- mean(y_test != pred_class)
 
 test_error_ridge_bin
 ```
@@ -1575,33 +1542,31 @@ test_error_ridge_bin
 10-fold CV:
 
 ```{r}
-compute_error_ridge_bin <- function(train_data, lambda, alpha, i){
+compute_error_ridge_bin <- function(train_data, lambda, alpha, i) {
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
-  x_train <- model.matrix(costs_bin ~ ., data = current_train_folds)[ , -1]
+
+  x_train <- model.matrix(costs_bin ~ ., data = current_train_folds)[, -1]
   y_train <- current_train_folds$costs_bin
 
-  x_test <- model.matrix(costs_bin ~ ., data = current_test_fold)[ , -1]
+  x_test <- model.matrix(costs_bin ~ ., data = current_test_fold)[, -1]
   y_test <- current_test_fold$costs_bin
-    
-  ridge_reg <- glmnet(x_train, y_train, alpha = alpha, family = 'binomial', lambda = lambda)
+
+  ridge_reg <- glmnet(x_train, y_train, alpha = alpha, family = "binomial", lambda = lambda)
   pred_ridge <- predict(ridge_reg, newx = x_test, type = "response")
-  
+
   pred_class <- ifelse(pred_ridge >= 0.5, 1, 0)
-    
-  error <- mean( current_test_fold$costs_bin != pred_class ) 
+
+  error <- mean(current_test_fold$costs_bin != pred_class)
   return(error)
 }
 
-#compute_MSEP_lm(train_data, formula, i)
+# compute_MSEP_lm(train_data, formula, i)
 
-kfold_cv_ridge_bin <- function(train_data, lambda, alpha, k = 10){
-  
-  MSEP_vec <- map_dbl(1:k, ~compute_error_ridge_bin(train_data, lambda, alpha, .x))
+kfold_cv_ridge_bin <- function(train_data, lambda, alpha, k = 10) {
+  MSEP_vec <- map_dbl(1:k, ~ compute_error_ridge_bin(train_data, lambda, alpha, .x))
   avg_MSEP <- mean(MSEP_vec)
   return(avg_MSEP)
-  
 }
 
 cv_error_ridge_bin <- kfold_cv_ridge_bin(train_data, lambda_min, alpha = 0)
@@ -1616,22 +1581,21 @@ cm_ridge_bin
 ## Lasso (find the best tuning parameter using cross-validation)
 
 ```{r}
-
 set.seed(1)
 
 # fit lasso model
-lambda_grid <- 10 ^ seq(10, -2, length = 100)
+lambda_grid <- 10^seq(10, -2, length = 100)
 
 # 10-fold cross validation to choose tuning parameter
-cv_lasso <- 
+cv_lasso <-
   cv.glmnet(
     x_train,
     y_train,
     alpha = 1,
     lambda = lambda_grid,
-    family = 'binomial',
-    nfolds = 10        # Set the number of folds to n to get LOOCV
-    )
+    family = "binomial",
+    nfolds = 10 # Set the number of folds to n to get LOOCV
+  )
 
 lambda_min <- cv_lasso$lambda.min
 lambda_min
@@ -1640,7 +1604,7 @@ lambda_min
 
 ```{r}
 # fit lasso model with optimal tuning parameter
-lasso_bestlambda <- glmnet(x_train, y_train, alpha = 1, family = 'binomial', lambda = lambda_min)
+lasso_bestlambda <- glmnet(x_train, y_train, alpha = 1, family = "binomial", lambda = lambda_min)
 coef(lasso_bestlambda)
 ```
 
@@ -1649,7 +1613,7 @@ pred_lasso <- predict(lasso_bestlambda, newx = x_test, type = "response")
 
 pred_class <- ifelse(pred_lasso >= 0.5, 1, 0)
 
-test_error_lasso_bin <- mean( y_test !=  pred_class )
+test_error_lasso_bin <- mean(y_test != pred_class)
 
 test_error_lasso_bin
 ```
@@ -1670,18 +1634,18 @@ cm_lasso_bin
 ## Decision Tree (with pruning)
 
 ```{r}
-train_data <- train_data |> 
+train_data <- train_data |>
   mutate(costs_bin = as.factor(costs_bin))
 
-test_data <- test_data |> 
+test_data <- test_data |>
   mutate(costs_bin = as.factor(costs_bin))
 
 formula <- as.formula("costs_bin ~ .")
-tree_train <- tree(formula, 
-             select(train_data, -fold),
-             control = tree.control(1866496, mincut = 1000),
-             split = "gini"
-             )
+tree_train <- tree(formula,
+  select(train_data, -fold),
+  control = tree.control(1866496, mincut = 1000),
+  split = "gini"
+)
 
 # pruning -- find best size with cv
 set.seed(1)
@@ -1694,7 +1658,7 @@ tree_pruned <- prune.misclass(tree_train, best = 4)
 
 pred <- predict(tree_pruned, newdata = test_data, type = "class")
 
-test_error_classtree <- mean( test_data$costs_bin != pred )
+test_error_classtree <- mean(test_data$costs_bin != pred)
 
 test_error_classtree
 ```
@@ -1708,31 +1672,29 @@ cm_classtree
 10-fold CV: 
 
 ```{r}
-compute_error_classtree <- function(train_data, formula, i){
+compute_error_classtree <- function(train_data, formula, i) {
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
-  tree_train <- tree(formula, 
-             current_train_folds,
-             control = tree.control(1866496, mincut = 1000),
-             split = "gini"
-             )
-  
+
+  tree_train <- tree(formula,
+    current_train_folds,
+    control = tree.control(1866496, mincut = 1000),
+    split = "gini"
+  )
+
   tree_pruned <- prune.tree(tree_train, best = 4)
 
   pred <- predict(tree_pruned, newdata = current_test_fold, type = "class")
 
-  error <- mean( current_test_fold$costs_bin != pred )
+  error <- mean(current_test_fold$costs_bin != pred)
   return(error)
 }
 
 
-kfold_cv_classtree <- function(train_data, formula, k = 10){
-  
-  MSEP_vec <- map_dbl(1:k, ~compute_error_classtree(train_data, formula, .x))
+kfold_cv_classtree <- function(train_data, formula, k = 10) {
+  MSEP_vec <- map_dbl(1:k, ~ compute_error_classtree(train_data, formula, .x))
   avg_MSEP <- mean(MSEP_vec)
   return(avg_MSEP)
-  
 }
 
 cv_error_classtree <- kfold_cv_classtree(train_data, formula)
@@ -1748,20 +1710,20 @@ p <- ncol(train_data) - 2
 
 # Bagging
 set.seed(1)
-bag_train <- 
+bag_train <-
   randomForest(
-    formula, 
-    data = select(train_data, -fold), 
-    ntree = n_trees, 
-    mtry = p,            # m = p for bagging.
-    keep.forest = TRUE,  # not necessary, using to compute test errors for all trees.
-    importance = TRUE    # not necessary, compute importance of variables.
-    )
+    formula,
+    data = select(train_data, -fold),
+    ntree = n_trees,
+    mtry = p, # m = p for bagging.
+    keep.forest = TRUE, # not necessary, using to compute test errors for all trees.
+    importance = TRUE # not necessary, compute importance of variables.
+  )
 
 # Test errors:
 bag_pred <- predict(bag_train, test_data, type = "class")
 
-test_error_bag_cl <- mean( bag_pred != test_data$costs_bin)
+test_error_bag_cl <- mean(bag_pred != test_data$costs_bin)
 
 test_error_bag_cl
 ```
@@ -1776,7 +1738,7 @@ cm_bag
 ```
 
 ```{r}
-mean_decrease_Gini = importance(bag_train,type=2)
+mean_decrease_Gini <- importance(bag_train, type = 2)
 mean_decrease_Gini
 ```
 
@@ -1785,39 +1747,37 @@ mean_decrease_Gini
 10-fold CV:
 
 ```{r}
-compute_error_bag_cl <- function(train_data, formula, i){
+compute_error_bag_cl <- function(train_data, formula, i) {
   set.seed(i)
-  
+
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
+
   n_trees <- 300
   p <- ncol(current_train_folds) - 1
-  
-  bag_train <- 
+
+  bag_train <-
     randomForest(
-      formula, 
-      data = current_train_folds, 
-      ntree = n_trees, 
-      mtry = p,            # m = p for bagging.
-      keep.forest = TRUE,  # not necessary, using to compute test errors for all trees.
-      importance = TRUE    # not necessary, compute importance of variables.
+      formula,
+      data = current_train_folds,
+      ntree = n_trees,
+      mtry = p, # m = p for bagging.
+      keep.forest = TRUE, # not necessary, using to compute test errors for all trees.
+      importance = TRUE # not necessary, compute importance of variables.
     )
-  
+
   bag_pred <- predict(bag_train, current_test_fold, type = "class")
-  
-  error <-  mean(bag_pred != current_test_fold$costs_bin)
+
+  error <- mean(bag_pred != current_test_fold$costs_bin)
 
   return(error)
 }
 
 
-kfold_cv_bag_cl <- function(train_data, formula, k = 10){
-  
-  MSEP_vec <- map_dbl(1:k, ~compute_error_bag_cl(train_data, formula, .x))
+kfold_cv_bag_cl <- function(train_data, formula, k = 10) {
+  MSEP_vec <- map_dbl(1:k, ~ compute_error_bag_cl(train_data, formula, .x))
   avg_MSEP <- mean(MSEP_vec)
   return(avg_MSEP)
-  
 }
 
 cv_error_bag_cl <- kfold_cv_bag_cl(train_data, formula)
@@ -1827,62 +1787,58 @@ cv_error_bag_cl
 ## Random Forest (with variable importance)
 
 ```{r}
-compute_error_rf_cl <- function(train_data, formula, i){
-  
+compute_error_rf_cl <- function(train_data, formula, i) {
   set.seed(i)
-  
+
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
+
   n_trees <- 300
   p <- ncol(current_train_folds) - 1
-  
-  rf_train <- 
+
+  rf_train <-
     randomForest(
-      formula, 
-      data = current_train_folds, 
-      ntree = n_trees, 
-      keep.forest = TRUE,  # not necessary, using to compute test errors for all trees.
-      importance = TRUE    # not necessary, compute importance of variables.
+      formula,
+      data = current_train_folds,
+      ntree = n_trees,
+      keep.forest = TRUE, # not necessary, using to compute test errors for all trees.
+      importance = TRUE # not necessary, compute importance of variables.
     )
-  
+
   rf_pred <- predict(rf_train, current_test_fold, type = "class")
-  
-  error <-  mean(rf_pred != current_test_fold$costs_bin)
+
+  error <- mean(rf_pred != current_test_fold$costs_bin)
 
   return(error)
 }
 
 
-kfold_cv_rf_cl <- function(train_data, formula, k = 10){
-  
-  error_vec <- map_dbl(1:k, ~compute_error_rf_cl(train_data, formula, .x))
+kfold_cv_rf_cl <- function(train_data, formula, k = 10) {
+  error_vec <- map_dbl(1:k, ~ compute_error_rf_cl(train_data, formula, .x))
   avg_error <- mean(error_vec)
   return(avg_error)
-  
 }
 
-#cv_error_rf_cl <- kfold_cv_rf_cl(train_data, formula)
+# cv_error_rf_cl <- kfold_cv_rf_cl(train_data, formula)
 cv_error_rf_cl <- 0.03640008
 ```
 
 ```{r}
 set.seed(1)
-rf_train <- 
+rf_train <-
   randomForest(
-    formula, 
-    data = select(train_data, -fold), 
+    formula,
+    data = select(train_data, -fold),
     ntree = n_trees,
-    keep.forest = TRUE,  # not necessary, using to compute test errors for all trees.
-    importance = TRUE    # not necessary, compute importance of variables.
-    )
+    keep.forest = TRUE, # not necessary, using to compute test errors for all trees.
+    importance = TRUE # not necessary, compute importance of variables.
+  )
 
 # Test errors:
 rf_pred <- predict(rf_train, test_data, type = "class")
 
 test_error_rf_cl <- mean(rf_pred != test_data$costs_bin)
 test_error_rf_cl
-
 ```
 
 ```{r}
@@ -1896,7 +1852,7 @@ cm_rf
 ```
 
 ```{r}
-mean_decrease_Gini = importance(rf_train,type=2)
+mean_decrease_Gini <- importance(rf_train, type = 2)
 mean_decrease_Gini
 ```
 
@@ -1912,52 +1868,49 @@ test_data <- df_test |> select(-c(total_costs))
 
 
 ```{r}
-compute_error_boost <- function(train_data, formula, lambda, i){
-  
+compute_error_boost <- function(train_data, formula, lambda, i) {
   set.seed(i)
-  
+
   current_train_folds <- filter(train_data, fold != i) |> select(-fold)
   current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-  
+
   n_trees <- 300
-  
-  boost_train <- 
-  gbm(
-    formula, 
-    data = current_train_folds, 
-    distribution = "bernoulli",
-    n.trees = n_trees, 
-    shrinkage = lambda
+
+  boost_train <-
+    gbm(
+      formula,
+      data = current_train_folds,
+      distribution = "bernoulli",
+      n.trees = n_trees,
+      shrinkage = lambda
     )
-  
+
   boost_pred <- predict(boost_train, current_test_fold, n.trees = n_trees, type = "response")
-  
+
   pred_class <- ifelse(boost_pred >= 0.5, 1, 0)
 
-  error <- mean( (pred_class != current_test_fold$costs_bin) )
-  
+  error <- mean((pred_class != current_test_fold$costs_bin))
+
   return(error)
 }
 
 
-kfold_cv_boost <- function(train_data, formula, lambda, k = 10){
-  
-  error_vec <- map_dbl(1:k, ~compute_error_boost(train_data, formula, lambda, .x))
+kfold_cv_boost <- function(train_data, formula, lambda, k = 10) {
+  error_vec <- map_dbl(1:k, ~ compute_error_boost(train_data, formula, lambda, .x))
   avg_error <- mean(error_vec)
   return(avg_error)
-  
 }
 
 lambda_grid <- seq(0, 3, by = 0.1)
 
-#cv_error_rates <- map_dbl(lambda_grid, ~kfold_cv_boost(train_data, formula, .x, k = 10))
+# cv_error_rates <- map_dbl(lambda_grid, ~kfold_cv_boost(train_data, formula, .x, k = 10))
 
-#optimal_lambda <- lambda_grid[which(cv_error_rates == min(cv_error_rates))]
+# optimal_lambda <- lambda_grid[which(cv_error_rates == min(cv_error_rates))]
 
 optimal_lambda <- 0.2
 
-#cv_error_rate_optimal_lambda <- min(cv_error_rates)
-#cv_error_rate_optimal_lambda
+# cv_error_rate_optimal_lambda <- min(cv_error_rates)
+# cv_error_rate_optimal_lambda
 
 cv_error_rate_optimal_lambda <- 0.03718827
 
@@ -1967,22 +1920,21 @@ cv_error_boost_cl <- cv_error_rate_optimal_lambda
 
 ```{r}
 set.seed(1)
-boost_train <- 
+boost_train <-
   gbm(
-    formula, 
-    data = select(train_data, -fold), 
+    formula,
+    data = select(train_data, -fold),
     distribution = "bernoulli",
-    n.trees = n_trees, 
+    n.trees = n_trees,
     shrinkage = optimal_lambda,
-    
-    )
+  )
 
 # Test errors:
 boost_pred <- predict(boost_train, test_data, n.trees = n_trees, type = "response")
 
 pred_class <- ifelse(boost_pred >= 0.5, 1, 0)
 
-test_error_boost_cl <- mean( (pred_class != test_data$costs_bin) )
+test_error_boost_cl <- mean((pred_class != test_data$costs_bin))
 
 test_error_boost_cl
 ```
@@ -2007,31 +1959,33 @@ y_test <- test_data$costs_bin
 
 modelnn <- keras_model_sequential()
 modelnn %>%
-  layer_dense(units = 256, activation = "relu",
-              input_shape = 784) %>%
+  layer_dense(
+    units = 256, activation = "relu",
+    input_shape = 784
+  ) %>%
   layer_dropout(rate = 0.4) %>%
   layer_dense(units = 128, activation = "relu") %>%
   layer_dropout(rate = 0.3) %>%
   layer_dense(units = 10, activation = "softmax")
 
-modelnn %>% 
+modelnn %>%
   compile(
     loss = "categorical_crossentropy",
-    optimizer = optimizer_rmsprop(), 
+    optimizer = optimizer_rmsprop(),
     metrics = "accuracy"
-    )
+  )
 
 system.time(
-  history <- 
+  history <-
     modelnn %>%
     fit(
-      x_train, 
-      y_train, 
-      epochs = 30, 
+      x_train,
+      y_train,
+      epochs = 30,
       batch_size = 128,
       validation_split = 0.2
-      )
-  )
+    )
+)
 
 pred_nn <- predict(x_test)
 ```
@@ -2042,39 +1996,47 @@ pred_nn <- predict(x_test)
 # Summary Table Qualitative Outcome
 
 ```{r}
-cm_summary <- bind_rows(cm_logistic, cm_logistic2, cm_fwd_bin, 
-              cm_bwd_bin, cm_ridge_bin, cm_lasso_bin,
-              cm_knn, cm_lda, cm_qda, 
-              cm_nb, cm_nb_kde, cm_classtree, cm_bag,
-              cm_rf, cm_boost)
+cm_summary <- bind_rows(
+  cm_logistic, cm_logistic2, cm_fwd_bin,
+  cm_bwd_bin, cm_ridge_bin, cm_lasso_bin,
+  cm_knn, cm_lda, cm_qda,
+  cm_nb, cm_nb_kde, cm_classtree, cm_bag,
+  cm_rf, cm_boost
+)
 
-#cm_summary
+# cm_summary
 ```
 
 \newpage
 
 
 ```{r}
-method <- c("Logistic Regression (Main Effects)", "Logistic Regression (Transformations)",
-            "Forward Stepwise", "Backward Stepwise", "Ridge", "Lasso", "KNN",
-            "LDA", "QDA", "Naive Bayes- Gaussian", "Naive Bayes- KDE", "Decision Tree",
-            "Bagging", "Random Forest", "Boosting")
+method <- c(
+  "Logistic Regression (Main Effects)", "Logistic Regression (Transformations)",
+  "Forward Stepwise", "Backward Stepwise", "Ridge", "Lasso", "KNN",
+  "LDA", "QDA", "Naive Bayes- Gaussian", "Naive Bayes- KDE", "Decision Tree",
+  "Bagging", "Random Forest", "Boosting"
+)
 
-cv_error <- c(cv_error_logistic, cv_error_logistic2, cv_error_fwd_bin, 
-              cv_error_bwd_bin, cv_error_ridge_bin, cv_error_lasso_bin,
-              cv_error_knn, cv_error_lda, cv_error_qda, 
-              cv_error_nb, cv_error_nb_kde, cv_error_classtree, cv_error_bag_cl,
-              cv_error_rf_cl, cv_error_boost_cl)
+cv_error <- c(
+  cv_error_logistic, cv_error_logistic2, cv_error_fwd_bin,
+  cv_error_bwd_bin, cv_error_ridge_bin, cv_error_lasso_bin,
+  cv_error_knn, cv_error_lda, cv_error_qda,
+  cv_error_nb, cv_error_nb_kde, cv_error_classtree, cv_error_bag_cl,
+  cv_error_rf_cl, cv_error_boost_cl
+)
 
-test_error <- c(test_error_logistic, test_error_logistic2, test_error_fwd_bin, 
-              test_error_bwd_bin, test_error_ridge_bin, test_error_lasso_bin,
-              test_error_knn, test_error_lda, test_error_qda, 
-              test_error_nb, test_error_nb_kde, test_error_classtree, test_error_bag_cl,
-              test_error_rf_cl, test_error_boost_cl)
+test_error <- c(
+  test_error_logistic, test_error_logistic2, test_error_fwd_bin,
+  test_error_bwd_bin, test_error_ridge_bin, test_error_lasso_bin,
+  test_error_knn, test_error_lda, test_error_qda,
+  test_error_nb, test_error_nb_kde, test_error_classtree, test_error_bag_cl,
+  test_error_rf_cl, test_error_boost_cl
+)
 
-error_summary <- tibble(method, cv_error, test_error) |> 
-  bind_cols(cm_summary) |> 
-  mutate_if(is.numeric, ~round(.x, 2))
+error_summary <- tibble(method, cv_error, test_error) |>
+  bind_cols(cm_summary) |>
+  mutate_if(is.numeric, ~ round(.x, 2))
 
 knitr::kable(error_summary)
 ```
@@ -2083,7 +2045,6 @@ knitr::kable(error_summary)
 # Simulation Study
 
 ```{r}
-
 ```
 
 
@@ -2093,71 +2054,70 @@ set.seed(1)
 library(tidyverse)
 library(faux)
 
-compute_min_k <- function(df_train, seed){
-  
+compute_min_k <- function(df_train, seed) {
   set.seed(seed)
-  
-  df =  df_train |> select(-c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, costs_bin, rural, fold))
-  
-  sim = sim_df(df, 1000)
-  
-  cat_df =  hpc_scaled |> select(c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, rural))
-  
-  p = colMeans(cat_df)
-  
-  sim_cat = data.frame(matrix(nrow = 1000, ncol = 0))
-  
+
+  df <- df_train |> select(-c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, costs_bin, rural, fold))
+
+  sim <- sim_df(df, 1000)
+
+  cat_df <- hpc_scaled |> select(c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, rural))
+
+  p <- colMeans(cat_df)
+
+  sim_cat <- data.frame(matrix(nrow = 1000, ncol = 0))
+
   for (i in colnames(cat_df)) {
-    sim_cat[,i] = rbinom(1000, 1, p=p[i])
+    sim_cat[, i] <- rbinom(1000, 1, p = p[i])
   }
-  
-  sim = cbind(sim,sim_cat) |> 
+
+  sim <- cbind(sim, sim_cat) |>
     mutate(costs_bin = ifelse(total_costs > median(total_costs), 1, 0))
-  
-  train_prop = 0.9
-  
-  n = nrow(sim)
-  n_train = train_prop*n
-  n_test = n - n_train
-  
-  sim$set = "Train"
-  sim$set[sample(n, n_test, replace = FALSE)] = "Test"
-  
-  sim = sim |> select(-id)
-  
-  train.X = sim |> 
-    filter(set == "Train") |> 
-    select(-c(costs_bin,total_costs, set))
-  
-  train.Y = sim |> 
-    filter(set == "Train") |> 
-    pull(costs_bin)
-  
-  test.X = sim |> 
-    filter(set == "Test") |> 
+
+  train_prop <- 0.9
+
+  n <- nrow(sim)
+  n_train <- train_prop * n
+  n_test <- n - n_train
+
+  sim$set <- "Train"
+  sim$set[sample(n, n_test, replace = FALSE)] <- "Test"
+
+  sim <- sim |> select(-id)
+
+  train.X <- sim |>
+    filter(set == "Train") |>
     select(-c(costs_bin, total_costs, set))
-  
-  test.Y = sim |> 
-    filter(set == "Test") |> 
+
+  train.Y <- sim |>
+    filter(set == "Train") |>
     pull(costs_bin)
-  
-  K = 100
-  
-  erates = rep(0,K)
-  
+
+  test.X <- sim |>
+    filter(set == "Test") |>
+    select(-c(costs_bin, total_costs, set))
+
+  test.Y <- sim |>
+    filter(set == "Test") |>
+    pull(costs_bin)
+
+  K <- 100
+
+  erates <- rep(0, K)
+
   for (i in 1:K) {
-    knn.pred = knn(train.X, test.X, train.Y, k = i)
-    erates[i] = mean(knn.pred != test.Y)
+    knn.pred <- knn(train.X, test.X, train.Y, k = i)
+    erates[i] <- mean(knn.pred != test.Y)
   }
-  
+
   k_optimal <- which.min(erates)
-  
+
   min_erate <- min(erates)
-  
+
   var_error <- var(erates)
-  
+
   max_erate <- max(erates)
-  
+
   result <- tibble(
     i = seed,
     k = k_optimal,
@@ -2165,15 +2125,13 @@ compute_min_k <- function(df_train, seed){
     var = var_error,
     max_erate
   )
-  
+
   return(result)
-  
 }
 
 compute_min_k(df_train, 1)
 
-results <- map_dfr(1:10,  ~compute_min_k(df_train, .x) )
+results <- map_dfr(1:10, ~ compute_min_k(df_train, .x))
 
 results
 ```
-
