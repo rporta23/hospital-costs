@@ -2050,18 +2050,20 @@ knitr::kable(error_summary)
 
 
 ```{r}
-set.seed(1)
 library(tidyverse)
 library(faux)
+
+seed = 1
 
 compute_min_k <- function(df_train, seed) {
   set.seed(seed)
 
-  df <- df_train |> select(-c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, costs_bin, rural, fold))
+  df <- df_train |> select(-c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, costs_bin, rural, fold,
+                              duplicate))
 
   sim <- sim_df(df, 1000)
 
-  cat_df <- hpc_scaled |> select(c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, rural))
+  cat_df <- hpc_scaled |> select(c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, rural, duplicate))
 
   p <- colMeans(cat_df)
 
