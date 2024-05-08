@@ -1925,8 +1925,6 @@ library(keras)
 
 ```
 
-
-
 ## Qualitative summary
 ```{r}
 
@@ -1963,9 +1961,18 @@ error_summary <- tibble(method,cv_error,error_rates,true_pos,true_neg,
 knitr::kable(error_summary)
 ```
 
-
-## Calculate True/False Positive/Negative rates for each method
-
 # Bootstrap CI
 
 # Simulation Study
+
+```{r}
+library(faux)
+
+factor_scaled = scaled_hpc_dummie
+
+sim = sim_df(scaled_hpc_dummies,500)
+
+sim
+
+```
+
