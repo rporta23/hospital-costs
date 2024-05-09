@@ -629,8 +629,107 @@ testMSE_boosting = mean( (test$total_costs-boost.pred)^2 )
 
 ```
 
-
 ## Neural Network
+```{r}
+library(keras)
+train = df_train %>%
+  select(-costs_bin)
+
+test = df_test %>%
+  select(-costs_bin)
+
+
+# Neural Network Model 
+modelnn <- keras_model_sequential()
+modelnn %>%
+  layer_dense(units = 256, activation = "relu") %>% 
+  layer_dropout(rate = 0.4) %>%
+  layer_dense(units = 128, activation = "relu") %>% 
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 1, activation = "linear")
+
+modelnn %>% 
+  compile(
+    optimizer = 'adam',
+    loss = 'mse',           # mean squared error
+    metrics = list('mae')   # mean absolute error
+)
+```
+
+10-fold cv 
+```{r}
+compute_MSEP_neural_network = function(train_data,nn,i){
+  current_train_folds.x = filter(train_data, fold != i) %>% select(-c(costs_bin,fold))
+  current_train_folds.x = array_reshape(current_train_folds.x,
+                                               c(nrow(current_train_folds.x),ncol(current_train_folds.x)))
+  current_train_folds.y = filter(train_data, fold != i) %>% 
+    select(costs_bin) %>%
+    to_categorical(,num_classes=2)
+  
+  current_test_fold.x = filter(train_data, fold == i) %>% select(-c(costs_bin,fold))
+  current_test_fold.x = array_reshape(current_test_fold.x,
+                                               c(nrow(current_test_fold.x),ncol(current_test_fold.x)))
+  current_test_fold.y = filter(train_data, fold == i) %>% 
+    select(costs_bin) %>%
+    to_categorical(,num_classes=2)
+  
+  history = nn %>%
+  fit(current_train_folds.x,
+      current_train_folds.y,
+      epochs = 10,
+      batch_size = 32,
+      validation_data = list(current_test_fold.x,current_test_fold.y)
+      )
+  
+  error = 1- history[["metrics"]][["val_categorical_accuracy"]][10]
+  return(error)
+} 
+
+cv_neural_network = mean(map_dbl(1:10,~compute_MSEP_neural_network(train,modelnn,.x)))
+cv_neural_network = 0.04415372
+
+```
+
+
+Test MSE
+```{r}
+set.seed(1)
+
+train_x = train %>%
+  select(-c(total_costs,fold)) 
+train_x = array_reshape(train_x,c(nrow(train_x),ncol(train_x)))
+
+train_y = train %>%
+  select(total_costs) 
+train_y = array_reshape(train_y,c(nrow(train_y),ncol(train_y)))
+
+
+test_x = test %>%
+  select(-c(total_costs))
+test_x = array_reshape(test_x,c(nrow(test_x),ncol(test_x)))
+
+test_y = test %>%
+  select(total_costs) 
+test_y = array_reshape(test_y,c(nrow(test_y),ncol(test_y)))
+
+history = modelnn %>%
+  fit(train_x,
+      train_y,
+      epochs = 10,
+      batch_size = 32,
+      validation_data = list(test_x,test_y)
+      )
+plot(history, smooth = FALSE)
+
+# Using the metrics from the validation set 
+testMSE_neural_net = history[["metrics"]][["val_loss"]][10]
+testMSE_neural_net = 0.08771483
+# 
+# # Using the predict function to predict the class labels 
+# nn.pred = modelnn %>% predict(test_x,batch_size = 32) 
+# testMSE_neural_net = mean( (nn.pred-test_y)^2  )
+```
+
 
 # Variable Selection
 
@@ -1889,6 +1988,7 @@ falseneg_boosting = model_info$falseneg
 ## Neural Network
 
 ```{r}
+library(keras)
 train = df_train %>%
   select(-total_costs)
 
@@ -1944,6 +2044,7 @@ compute_MSEP_neural_network = function(train_data,nn,i){
 } 
 
 cv_neural_network = mean(map_dbl(1:10,~compute_MSEP_neural_network(train,modelnn,.x)))
+cv_neural_network = 0.04415372
 
 ```
 
@@ -1969,22 +2070,6 @@ test_y = df_test %>%
   select(costs_bin) %>%
   to_categorical(,num_classes=2)
 
-
-modelnn <- keras_model_sequential()
-modelnn %>%
-  layer_dense(units = 256, activation = "relu") %>% 
-  layer_dropout(rate = 0.4) %>%
-  layer_dense(units = 128, activation = "relu") %>% 
-  layer_dropout(rate = 0.3) %>%
-  layer_dense(units = 2, activation = "softmax")
-
-modelnn %>% 
-  compile(
-    loss = "categorical_crossentropy",
-    optimizer = optimizer_rmsprop(learning_rate = 0.01), 
-    metrics = "categorical_accuracy"
-    )
-
 history = modelnn %>%
   fit(train_x,
       train_y,
@@ -1998,7 +2083,6 @@ plot(history, smooth = FALSE)
 # Using the metrics from the validation set 
 avg_test_error = 1- history[["metrics"]][["val_categorical_accuracy"]][10]
 
-
 # Using the predict function to predict the class labels 
 nn.pred_one_hot = modelnn %>% predict(test_x,batch_size = 32) %>% round
 nn.pred = nn.pred_one_hot[,2]
@@ -2011,6 +2095,7 @@ falseneg_neural_net = 1 - truepos_neural_net
 error_neural_net = mean(df_test$costs_bin != nn.pred)
 
 testMSE_neural_net = avg_test_error
+testMSE_neural_net = 0.0385289
 ```
 
 ## Qualitative summary
@@ -2021,7 +2106,7 @@ method <- c("KNN","Multiple Logistic Regression","LDA","QDA","Naive Bayes (Gauss
             "Boosting","Neural Net")
 
 cv_error <- c(cv_knn,cv_glm,cv_lda,cv_qda,cv_nb,cv_nb_kde,cv_decision_tree,
-              cv_bagging,cv_random_forest,cv_boosting)
+              cv_bagging,cv_random_forest,cv_boosting,cv_neural_network)
 
 error_rates <- c(testMSE_knn,testMSE_glm,testMSE_lda,testMSE_qda,testMSE_nb,
                 testMSE_nb_kde,testMSE_decision_tree,testMSE_bagging,
