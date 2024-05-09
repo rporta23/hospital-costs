@@ -2072,11 +2072,17 @@ library(faux)
 
 seed = 1
 
+train_data <- df_train |> select(-c(costs_bin))
+
+formula <- as.formula("total_costs ~ .")
+
+mod_mlr <- lm(formula, data = select(train_data, -fold))
+
 compute_min_k <- function(df_train, seed) {
   set.seed(seed)
 
   df <- df_train |> select(-c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, costs_bin, rural, fold,
-                              duplicate))
+                              duplicate, total_costs))
 
   sim <- sim_df(df, 1000)
 
@@ -2089,9 +2095,17 @@ compute_min_k <- function(df_train, seed) {
   for (i in colnames(cat_df)) {
     sim_cat[, i] <- rbinom(1000, 1, p = p[i])
   }
+  
+  simulated_x <- cbind(sim, sim_cat)
 
-  sim <- cbind(sim, sim_cat) |>
-    mutate(costs_bin = ifelse(total_costs > median(total_costs), 1, 0))
+  simulated_true_fx <- predict(mod_mlr, newdata = simulated_x)
+  sigma <- 0.25
+  simulated_y <- simulated_true_fx + rnorm(length(simulated_true_fx), 0, sigma)
+  
+  sim <- simulated_x |>
+    mutate(total_costs = simulated_y,
+           costs_bin = ifelse(total_costs > median(total_costs), 1, 0)
+           )
 
   train_prop <- 0.9
 
@@ -2150,7 +2164,18 @@ compute_min_k <- function(df_train, seed) {
 
 compute_min_k(df_train, 1)
 
-results <- map_dfr(1:10, ~ compute_min_k(df_train, .x))
+results <- map_dfr(1:200, ~ compute_min_k(df_train, .x))
 
 results
 ```
+
+Plots: 
+
+```{r}
+ggplot(results, aes(x = k)) +
+  geom_histogram()
+
+ggplot(results, aes(x = k, y = error)) +
+  geom_point()
+```
+
