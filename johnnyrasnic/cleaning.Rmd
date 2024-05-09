@@ -781,14 +781,21 @@ set.seed(1)
 train.X = df_train |> select(-c(costs_bin,total_costs))
 test.X = df_test |> select(-c(costs_bin, total_costs))
 
-K = 25
+K = 50
 
-erates = rep(0,K)
+false_neg = rep(0,K)
+
+false_pos = rep(0,K)
 
 for (i in 1:K) {
   knn.pred = knn(train.X, test.X, df_train$costs_bin, k = i)
-  erates[i] = mean(knn.pred != df_test$costs_bin)
+  false_neg[i] = mean((knn.pred == 0) & (df_test$costs_bin == 1))
+  false_pos[i] = mean((knn.pred == 1) & (df_test$costs_bin == 0))
+
 }
+
+print(false_neg)
+print(false_pos)
 
 erates = matrix(rep(0, 10*K), nrow = 10, ncol =K)
 
@@ -796,12 +803,15 @@ for (i in 1:10) {
   for (j in 1:K) {
     train.X = filter(hpc_scaled, fold != i) |> select(-c(fold, set,total_costs,costs_bin))
     test.X = filter(hpc_scaled, fold == i) |> select(-c(fold, set,total_costs,costs_bin))
+    class = filter(hpc_scaled, fold != i)$costs_bin
     
-    knn.pred = knn(train.X, test.X, df_train$costs_bin, k = j)
+    knn.pred = knn(train.X, test.X, class, k = j)
     test.X = filter(hpc_scaled, fold == i) |> select(-c(fold, set,total_costs))
    erates[[i,j]] = mean(knn.pred != test.X$costs_bin)
   }
 }
+
+erates
 
 summarized_k = as_tibble(erates) |> summarize(across(everything(), mean))
 
@@ -1138,13 +1148,7 @@ erates
 mean(erates)
 ```
 
-```         
-```
-
 ## Bagging (with variable importance)
-
-```         
-```
 
 ```{r}
 library(randomForest)
@@ -1245,40 +1249,50 @@ library(faux)
 
 df =  hpc_scaled |> select(-c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, costs_bin, rural, set, fold))
 
-sim = sim_df(df, 1000)
+N = 10
 
-cat_df =  hpc_scaled |> select(c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, rural))
+min_K = c(N,0)
 
-p = colMeans(cat_df)
-
-sim_cat = data.frame(matrix(nrow = 1000, ncol = 0))
-
-for (i in colnames(cat_df)) {
-  sim_cat[,i] = rbinom(1000, 1, p=p[i])
+for (i in 1:N)
+  sim = sim_df(df, 1000)
+  
+  cat_df =  hpc_scaled |> select(c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, rural))
+  
+  p = colMeans(cat_df)
+  
+  sim_cat = data.frame(matrix(nrow = 1000, ncol = 0))
+  
+  for (i in colnames(cat_df)) {
+    sim_cat[,i] = rbinom(1000, 1, p=p[i])
+  }
+  
+  sim = cbind(sim,sim_cat)
+  
+  train_prop = 0.9
+  
+  n = nrow(sim)
+  n_train = train_prop*n
+  n_test = n - n_train
+  
+  sim$set = "Train"
+  sim$set[sample(n, n_test, replace = FALSE)] = "Test"
+  
+  sim = sim |> select(-id)
+  
+  train.X = sim |> select(-c(costs_bin,total_costs))
+  test.X = df_test |> select(-c(costs_bin, total_costs))
+  
+  K = 25
+  
+  erates = rep(0,K)
+  
+  for (i in 1:K) {
+    knn.pred = knn(train.X, test.X, df_train$costs_bin, k = i)
+    erates[i] = mean(knn.pred != df_test$costs_bin)
+  }
+  
+  min_K[i] = which.min(erates)
 }
-
-sim = cbind(sim,sim_cat)
-
-train_prop = 0.9
-
-n = nrow(sim)
-n_train = train_prop*n
-n_test = n - n_train
-
-sim$set = "Train"
-sim$set[sample(n, n_test, replace = FALSE)] = "Test"
-
-sim = sim |> select(-id)
-
-train.X = sim |> select(-c(costs_bin,total_costs))
-test.X = df_test |> select(-c(costs_bin, total_costs))
-
-K = 25
-
-erates = rep(0,K)
-
-for (i in 1:K) {
-  knn.pred = knn(train.X, test.X, df_train$costs_bin, k = i)
-  erates[i] = mean(knn.pred != df_test$costs_bin)
-}
+  
+min_K
 ```
