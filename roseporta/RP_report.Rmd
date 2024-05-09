@@ -687,7 +687,7 @@ test_error_boost <- mean((boost_pred - test_data$total_costs)^2)
 test_error_boost
 ```
 
-```{r, echo = TRUE}
+```{r, include = TRUE}
 knitr::kable(summary.gbm(boost_train, plotit = FALSE)[-1])
 ```
 
