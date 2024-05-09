@@ -230,6 +230,22 @@ test_MSEP_vec <- map_dbl(formulas, ~ compute_MSEP_test(.x, df_train, df_test))
 test_MSEP_vec
 ```
 
+```{r}
+method <- str_c("Marginal LR", " ", predictor_names)
+```
+
+```{r}
+summary_table_simple <- tibble(
+  method = method,
+  cv_error = test_error_vec,
+  test_error = test_MSEP_vec
+)
+
+summary_table_simple
+```
+
+
+
 
 ## Multiple linear regression
 
@@ -982,7 +998,8 @@ test_error <- c(
   test_error_regtree, test_error_bag, test_error_rf, test_error_boost
 )
 
-error_summary <- tibble(method, cv_error, test_error) |>
+error_summary <- summary_table_simple |> 
+  bind_rows( tibble(method, cv_error, test_error) ) |> 
   mutate_if(is.numeric, ~ round(.x, 3))
 
 knitr::kable(error_summary)
