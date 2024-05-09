@@ -15,17 +15,20 @@ hpc <- read_csv(here::here("hpc.csv"))
 #summary(hpc)
 
 hpcdf <- hpc |> 
-  mutate(start = as.Date(`Fiscal Year Begin Date`),end = as.Date(`Fiscal Year End Date`)) |> 
+  mutate(start = as.Date(`Fiscal Year Begin Date`),
+         end = as.Date(`Fiscal Year End Date`)) |> 
   mutate(days = as.numeric(end - start)) |> 
-  mutate(numBeds = `Total Bed Days Available`/days,id = row_number())
+  mutate(numBeds = `Total Bed Days Available`/days,
+         id = row_number())
 ```
 
 ```{r}
 hpc_clean <- hpcdf |> 
   janitor::clean_names() |> 
   select(provider_ccn, days, number_of_beds,
-         total_costs, rural_versus_urban, provider_type, type_of_control,
-         fte_employees_on_payroll, total_days = total_days_v_xviii_xix_unknown,
+         total_costs, rural_versus_urban, provider_type,
+         type_of_control,fte_employees_on_payroll,
+         total_days = total_days_v_xviii_xix_unknown,
          total_discharges = total_discharges_v_xviii_xix_unknown,
          total_income, total_assets,
          salaries = total_salaries_from_worksheet_a) |> 
@@ -50,30 +53,9 @@ duplicates <- hpc_clean |>
 
 dup <- map_lgl(hpc_clean$provider_ccn, `%in%`, duplicates$provider_ccn)
 
-hpc1 <- hpc_clean |> 
-  filter(!dup)
+hpc_clean$duplicate <- as.numeric(dup)
 
-hpc2 <- hpc_clean |> 
-  filter(dup) |> 
-  group_by(provider_ccn) |> 
-  summarise(
-    days = sum(days),
-    number_of_beds = mean(number_of_beds),
-    total_costs = sum(total_costs),
-    fte_employees_on_payroll = mean(fte_employees_on_payroll),
-    total_days = sum(total_days),
-    total_discharges = sum(total_discharges),
-    total_income = sum(total_income),
-    total_assets = mean(total_assets),
-    salaries = sum(salaries),
-    rural = max(rural),
-    control_bin = max(control_bin),
-    provider_bin = max(provider_bin)
-  )
-
-hpc_all <- bind_rows(hpc1, hpc2)
-
-hpc_normalize <- hpc_all |> 
+hpc_normalize <- hpc_clean |> 
   mutate(
     total_costs = total_costs/days,
     inpatients = total_days/days,
@@ -89,18 +71,19 @@ hpc_dummies <- hpc_normalize |>
   mutate(
     costs_bin = ifelse(total_costs > median(total_costs), 1, 0)
     ) |> 
-  tidytable::get_dummies(drop_first = TRUE) |> 
+   tidytable::get_dummies() |>
+  select(-c(control_bin_Voluntary, provider_bin_General)) |> 
   select(where(is.numeric))
 ```
 
 Scaled hpc_dummies (quantiative predictors are scaled)
 ```{r}
 quantitative_pred <- hpc_dummies %>%
-  select(-c(rural,control_bin_Governmental,control_bin_Proprietary,provider_bin_Specialized,costs_bin)) %>%
+  select(-c(rural,control_bin_Governmental,control_bin_Proprietary,provider_bin_Specialized,costs_bin,duplicate)) %>%
   scale()
 
 qualitative_pred <- hpc_dummies %>%
-  select(c(rural,control_bin_Governmental,control_bin_Proprietary,provider_bin_Specialized,costs_bin))
+  select(c(rural,control_bin_Governmental,control_bin_Proprietary,provider_bin_Specialized,costs_bin,duplicate))
 
 scaled_hpc_dummies = cbind(quantitative_pred,qualitative_pred)
 
@@ -349,8 +332,6 @@ compute_testMSE_lm <- function(train_data,test_data, formula){
   return(marginaldf)
 }
 
-# compute_testMSE_lm(train,test,"total_costs ~ total_days")
-
 testMSE_marginal_lm <- map_df(formulas, ~compute_testMSE_lm(train_data = train,test_data = test,formula = .x))
 
 ```
@@ -385,8 +366,6 @@ transformation_lm <- summary(lm(total_costs ~ fte_employees_on_payroll*total_inc
 
 polynomial_lm <- summary(lm(total_costs ~ salaries + I(salaries^2),data = df_train))
 
-# ggplot(df_train) + 
-#   geom_point(aes(x=number_of_beds,y=total_costs))
 ```
 
 10-fold cv
@@ -423,18 +402,7 @@ testMSE_multiple_lm <- compute_testMSE_multiple_lm(train,test)
 ```
 
 
-```{r}
-# method <- c("Multiple Linear Regression")
-# 
-# formula <- c("total_costs ~ .")
-# 
-# cv_error <- c(cv_multiple_lm)
-# 
-# test_error <- c(testMSE_multiple_lm)
-```
-
 ## Regression Tree (with pruning)
-
 ```{r}
 library(tree)
 
@@ -1919,10 +1887,130 @@ falseneg_boosting = model_info$falseneg
 ```
 
 ## Neural Network
+
+```{r}
+train = df_train %>%
+  select(-total_costs)
+
+test = df_test %>%
+  select(-total_costs)
+
+
+# Neural Network Model 
+modelnn <- keras_model_sequential()
+modelnn %>%
+  layer_dense(units = 256, activation = "relu") %>% 
+  layer_dropout(rate = 0.4) %>%
+  layer_dense(units = 128, activation = "relu") %>% 
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 2, activation = "softmax")
+
+modelnn %>% 
+  compile(
+    loss = "categorical_crossentropy",
+    optimizer = optimizer_rmsprop(learning_rate = 0.01), 
+    metrics = "categorical_accuracy"
+    )
+```
+
+
+10-fold CV
+```{r}
+compute_MSEP_neural_network = function(train_data,nn,i){
+  current_train_folds.x = filter(train_data, fold != i) %>% select(-c(costs_bin,fold))
+  current_train_folds.x = array_reshape(current_train_folds.x,
+                                               c(nrow(current_train_folds.x),ncol(current_train_folds.x)))
+  current_train_folds.y = filter(train_data, fold != i) %>% 
+    select(costs_bin) %>%
+    to_categorical(,num_classes=2)
+  
+  current_test_fold.x = filter(train_data, fold == i) %>% select(-c(costs_bin,fold))
+  current_test_fold.x = array_reshape(current_test_fold.x,
+                                               c(nrow(current_test_fold.x),ncol(current_test_fold.x)))
+  current_test_fold.y = filter(train_data, fold == i) %>% 
+    select(costs_bin) %>%
+    to_categorical(,num_classes=2)
+  
+  history = nn %>%
+  fit(current_train_folds.x,
+      current_train_folds.y,
+      epochs = 10,
+      batch_size = 32,
+      validation_data = list(current_test_fold.x,current_test_fold.y)
+      )
+  
+  error = 1- history[["metrics"]][["val_categorical_accuracy"]][10]
+  return(error)
+} 
+
+cv_neural_network = mean(map_dbl(1:10,~compute_MSEP_neural_network(train,modelnn,.x)))
+
+```
+
+Test error 
 ```{r}
 library(keras)
 
+set.seed(1)
 
+train_x = df_train %>%
+  select(-c(total_costs,costs_bin,fold)) 
+train_x = array_reshape(train_x,c(nrow(train_x),ncol(train_x)))
+
+train_y = df_train %>%
+  select(costs_bin) %>%
+  to_categorical(,num_classes=2)
+
+test_x = df_test %>%
+  select(-c(total_costs,costs_bin))
+test_x = array_reshape(test_x,c(nrow(test_x),ncol(test_x)))
+
+test_y = df_test %>%
+  select(costs_bin) %>%
+  to_categorical(,num_classes=2)
+
+
+modelnn <- keras_model_sequential()
+modelnn %>%
+  layer_dense(units = 256, activation = "relu") %>% 
+  layer_dropout(rate = 0.4) %>%
+  layer_dense(units = 128, activation = "relu") %>% 
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 2, activation = "softmax")
+
+modelnn %>% 
+  compile(
+    loss = "categorical_crossentropy",
+    optimizer = optimizer_rmsprop(learning_rate = 0.01), 
+    metrics = "categorical_accuracy"
+    )
+
+history = modelnn %>%
+  fit(train_x,
+      train_y,
+      epochs = 10,
+      batch_size = 32,
+      validation_data = list(test_x,test_y)
+      )
+
+plot(history, smooth = FALSE)
+
+# Using the metrics from the validation set 
+avg_test_error = 1- history[["metrics"]][["val_categorical_accuracy"]][10]
+
+
+# Using the predict function to predict the class labels 
+nn.pred_one_hot = modelnn %>% predict(test_x,batch_size = 32) %>% round
+nn.pred = nn.pred_one_hot[,2]
+
+contingency = table(nn.pred,df_test$costs_bin)
+truepos_neural_net = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+trueneg_neural_net = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+falsepos_neural_net = 1 - trueneg_neural_net
+falseneg_neural_net = 1 - truepos_neural_net
+error_neural_net = mean(df_test$costs_bin != nn.pred)
+
+testMSE_neural_net = avg_test_error
 ```
 
 ## Qualitative summary
@@ -1930,30 +2018,30 @@ library(keras)
 
 method <- c("KNN","Multiple Logistic Regression","LDA","QDA","Naive Bayes (Gaussian)",
             "Naive Bayes (KDE)","Decision Tree","Basgging","Random Forest",
-            "Boosting")
+            "Boosting","Neural Net")
 
 cv_error <- c(cv_knn,cv_glm,cv_lda,cv_qda,cv_nb,cv_nb_kde,cv_decision_tree,
               cv_bagging,cv_random_forest,cv_boosting)
 
 error_rates <- c(testMSE_knn,testMSE_glm,testMSE_lda,testMSE_qda,testMSE_nb,
                 testMSE_nb_kde,testMSE_decision_tree,testMSE_bagging,
-                testMSE_random_forest,testMSE_boosting)
+                testMSE_random_forest,testMSE_boosting,testMSE_neural_net)
 
 true_pos <- c(truepos_knn,truepos_glm,truepos_lda,truepos_qda,truepos_nb,
               truepos_nb_kde,truepos_decision_tree,truepos_bagging,
-              truepos_random_forest,truepos_boosting)
+              truepos_random_forest,truepos_boosting,truepos_neural_net)
 
 true_neg <- c(trueneg_knn,trueneg_glm,trueneg_lda,trueneg_qda,trueneg_nb,
               trueneg_nb_kde,trueneg_decision_tree,trueneg_bagging,
-              trueneg_random_forest,trueneg_boosting)
+              trueneg_random_forest,trueneg_boosting,trueneg_neural_net)
 
 false_pos <- c(falsepos_knn,falsepos_glm,falsepos_lda,falsepos_qda,falsepos_nb,
               falsepos_nb_kde,falsepos_decision_tree,falsepos_bagging,
-              falsepos_random_forest,falsepos_boosting)
+              falsepos_random_forest,falsepos_boosting,falsepos_neural_net)
 
 false_neg <- c(falseneg_knn,falseneg_glm,falseneg_lda,falseneg_qda,falseneg_nb,
               falseneg_nb_kde,falseneg_decision_tree,falseneg_bagging,
-              falseneg_random_forest,falseneg_boosting)
+              falseneg_random_forest,falseneg_boosting,falseneg_neural_net)
 
 error_summary <- tibble(method,cv_error,error_rates,true_pos,true_neg,
                         false_pos,false_neg)
