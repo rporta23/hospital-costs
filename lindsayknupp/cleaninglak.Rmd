@@ -10,6 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 ```
 
+## Data Cleaning
 ```{r}
 hpc <- read_csv(here::here("hpc.csv"))
 #summary(hpc)
@@ -656,22 +657,26 @@ modelnn %>%
 )
 ```
 
-10-fold cv 
+10-fold cv
 ```{r}
 compute_MSEP_neural_network = function(train_data,nn,i){
-  current_train_folds.x = filter(train_data, fold != i) %>% select(-c(costs_bin,fold))
+  current_train_folds.x = filter(train_data, fold != i) %>% select(-c(total_costs,fold))
   current_train_folds.x = array_reshape(current_train_folds.x,
-                                               c(nrow(current_train_folds.x),ncol(current_train_folds.x)))
+                                        c(nrow(current_train_folds.x),
+                                          ncol(current_train_folds.x)))
   current_train_folds.y = filter(train_data, fold != i) %>% 
-    select(costs_bin) %>%
-    to_categorical(,num_classes=2)
-  
-  current_test_fold.x = filter(train_data, fold == i) %>% select(-c(costs_bin,fold))
+    select(total_costs)
+   current_train_folds.y = array_reshape(current_train_folds.y,
+                                         c(nrow(current_train_folds.y),1))
+
+  current_test_fold.x = filter(train_data, fold == i) %>% select(-c(total_costs,fold))
   current_test_fold.x = array_reshape(current_test_fold.x,
-                                               c(nrow(current_test_fold.x),ncol(current_test_fold.x)))
+                                               c(nrow(current_test_fold.x),
+                                                 ncol(current_test_fold.x)))
   current_test_fold.y = filter(train_data, fold == i) %>% 
-    select(costs_bin) %>%
-    to_categorical(,num_classes=2)
+    select(total_costs)
+ current_test_fold.y = array_reshape(current_test_fold.y,
+                                         c(nrow(current_test_fold.y),1))
   
   history = nn %>%
   fit(current_train_folds.x,
@@ -681,15 +686,13 @@ compute_MSEP_neural_network = function(train_data,nn,i){
       validation_data = list(current_test_fold.x,current_test_fold.y)
       )
   
-  error = 1- history[["metrics"]][["val_categorical_accuracy"]][10]
+  error = history[["metrics"]][["val_loss"]][10]
   return(error)
 } 
 
 cv_neural_network = mean(map_dbl(1:10,~compute_MSEP_neural_network(train,modelnn,.x)))
-cv_neural_network = 0.04415372
-
+cv_neural_network = 0.0721646
 ```
-
 
 Test MSE
 ```{r}
@@ -724,10 +727,6 @@ plot(history, smooth = FALSE)
 # Using the metrics from the validation set 
 testMSE_neural_net = history[["metrics"]][["val_loss"]][10]
 testMSE_neural_net = 0.08771483
-# 
-# # Using the predict function to predict the class labels 
-# nn.pred = modelnn %>% predict(test_x,batch_size = 32) 
-# testMSE_neural_net = mean( (nn.pred-test_y)^2  )
 ```
 
 
@@ -2054,19 +2053,19 @@ library(keras)
 
 set.seed(1)
 
-train_x = df_train %>%
-  select(-c(total_costs,costs_bin,fold)) 
+train_x = train %>%
+  select(-c(costs_bin,fold)) 
 train_x = array_reshape(train_x,c(nrow(train_x),ncol(train_x)))
 
-train_y = df_train %>%
+train_y = train %>%
   select(costs_bin) %>%
   to_categorical(,num_classes=2)
 
-test_x = df_test %>%
-  select(-c(total_costs,costs_bin))
+test_x = test %>%
+  select(-c(costs_bin))
 test_x = array_reshape(test_x,c(nrow(test_x),ncol(test_x)))
 
-test_y = df_test %>%
+test_y = test %>%
   select(costs_bin) %>%
   to_categorical(,num_classes=2)
 
@@ -2139,13 +2138,130 @@ knitr::kable(error_summary)
 # Simulation Study
 
 ```{r}
+library(tidyverse)
 library(faux)
+library(class)
 
-factor_scaled = scaled_hpc_dummie
 
-sim = sim_df(scaled_hpc_dummies,500)
+seed = 1
 
-sim
+train_data <- df_train |> select(-c(costs_bin,fold))
 
+formula <- as.formula("total_costs ~ .")
+
+mod_mlr <- lm(formula= formula, data = train_data)
+
+compute_min_k <- function(df_train, seed) {
+  set.seed(seed)
+
+  df <- df_train |> select(-c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, costs_bin, rural, fold,
+                              duplicate, total_costs))
+
+  sim <- sim_df(df, 1000)
+
+  cat_df <- scaled_hpc_dummies |> select(c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, rural, duplicate))
+
+  p <- colMeans(cat_df)
+
+  sim_cat <- data.frame(matrix(nrow = 1000, ncol = 0))
+
+  for (i in colnames(cat_df)) {
+    sim_cat[, i] <- rbinom(1000, 1, p = p[i])
+  }
+  
+  simulated_x <- cbind(sim, sim_cat)
+
+  simulated_true_fx <- predict(mod_mlr, newdata = simulated_x)
+  sigma <- 0.25
+  simulated_y <- simulated_true_fx + rnorm(length(simulated_true_fx), 0, sigma)
+  
+  sim <- simulated_x |>
+    mutate(total_costs = simulated_y,
+           costs_bin = ifelse(total_costs > median(total_costs), 1, 0)
+           )
+
+  train_prop <- 0.9
+
+  n <- nrow(sim)
+  n_train <- train_prop * n
+  n_test <- n - n_train
+
+  sim$set <- "Train"
+  sim$set[sample(n, n_test, replace = FALSE)] <- "Test"
+
+  sim <- sim |> select(-id)
+
+  train.X <- sim |>
+    filter(set == "Train") |>
+    select(-c(costs_bin, total_costs, set))
+
+  train.Y <- sim |>
+    filter(set == "Train") |>
+    pull(costs_bin)
+
+  test.X <- sim |>
+    filter(set == "Test") |>
+    select(-c(costs_bin, total_costs, set))
+
+  test.Y <- sim |>
+    filter(set == "Test") |>
+    pull(costs_bin)
+
+  K <- 100
+
+  erates <- rep(0, K)
+
+  for (i in 1:K) {
+    knn.pred <- knn(train.X, test.X, train.Y, k = i)
+    erates[i] <- mean(knn.pred != test.Y)
+  }
+
+  k_optimal <- which.min(erates)
+
+  min_erate <- min(erates)
+
+  var_error <- var(erates)
+
+  max_erate <- max(erates)
+
+  result <- tibble(
+    i = seed,
+    k = k_optimal,
+    error = min_erate,
+    var = var_error,
+    max_erate
+  )
+
+  return(result)
+}
+
+compute_min_k(df_train, 1)
+
+results <- map_dfr(1:200, ~ compute_min_k(df_train, .x))
+
+results
+
+write_csv(results,file="sim_study_results.csv")
+
+```
+
+
+```{r}
+ggplot(results) +
+  geom_histogram(aes(x=k),bins=15) +
+  ggtitle("Optimal k over 200 datasets") +
+  xlab("k") + 
+  ylab("count")
+
+ggplot(results) +
+  geom_point(aes(x=k,y=error)) + 
+  ggtitle("Error rates vs optimal k")
+
+ggplot(results) + 
+  geom_histogram(aes(x=var),bins=15)
+
+ggplot(results) +
+  geom_point(aes(x=k,y=var)) +
+  ggtitle("Error variance vs optimal k")
 ```
 
