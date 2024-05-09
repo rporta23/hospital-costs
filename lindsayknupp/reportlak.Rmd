@@ -1,7 +1,7 @@
 ---
-title: "reportlak"
+title: "Final Report"
 author: "Lindsay Knupp"
-date: "2024-05-09"
+date: "2024-05-14"
 output: pdf_document
 ---
 
@@ -9,22 +9,40 @@ output: pdf_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+## Dataset
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
 
-```{r cars}
-summary(cars)
+## Simulation Study 
+
+We were interested in understanding how our data affected the optimal choice of $k$ in the $k$ -nearest neighbors algorithm. We already experienced some variability when running our model through on different computers. Therefore, we wanted to see if more simulated datasets would produce the same variablility. 
+
+To replicate our $13$ predictors and $2$ response variables, we used a package called `faux` to simulate our numerical predictors from a multivariate normal distribution. 
+
+We used a standard normal distribution to replicate our $13$ predictors. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+library(ggplot2)
+library(readr)
+
+results = read_csv("~/hospital-costs/lindsayknupp/sim_study_results.csv")
+
+ggplot(results) +
+  geom_histogram(aes(x=k),bins=15) +
+  ggtitle("Optimal k over 200 datasets") +
+  xlab("k") + 
+  ylab("count")
+
+ggplot(results) +
+  geom_point(aes(x=k,y=error)) + 
+  ggtitle("Error rates vs optimal k")
+
+ggplot(results) + 
+  geom_histogram(aes(x=var),bins=15)
+
+ggplot(results) +
+  geom_point(aes(x=k,y=var)) +
+  ggtitle("Error variance vs optimal k")
+
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
