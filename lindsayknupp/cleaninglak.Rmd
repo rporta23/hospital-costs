@@ -1254,14 +1254,16 @@ kfold_cv_knn <- function(train_data,neighbors, k = 10) {
 neighbors <- 1:100 
 # Commented lines out b/c it takes so long
 # knn_error_rates = map_dbl(neighbors, ~kfold_cv_knn(train,neighbors = .x))
+# # 
+# knn_csv = write_csv(data.frame(error = knn_error_rates), file = "knn_error_rates.csv")
 
 # optimal_n <- which.min(knn_error_rates)
 # optimal_error_rate <- knn_error_rates[optimal_n]
 
-optimal_n <- 5
-optimal_error_rate <- 0.05057881
+# optimal_n <- 7
+# optimal_error_rate <- 0.05329245
 
-cv_knn = optimal_error_rate
+# cv_knn = optimal_error_rate
 ```
 
 ### Compare true test error rate

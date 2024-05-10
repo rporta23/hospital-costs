@@ -26,6 +26,7 @@ library(knitr)
 library(tidyverse)
 library(kableExtra)
 ```
+
 \renewcommand{\arraystretch}{2}
 ```{r,warning=FALSE,message=FALSE,echo=FALSE}
 Variables = c("Number of Beds","FTE employees on payroll","Total hospital days",
@@ -65,6 +66,48 @@ summary %>%
   column_spec(3,width="8cm")  %>%
   pack_rows("Predictors",1,12) %>%
   pack_rows("Response",13,14)
+```
+
+## Qualitative Outcomes 
+
+For all of our qualitative outcomes, we were trying to predict whether a hospital's total costs were above or below the median. All of the methods' error rates were comparable except for LDA which had the highest misclassification rate at about $17\%$. KNN had no consistent choice of an optimal $k$ across simulations and its variability inspired our simulation study. 
+
+### KNN 
+
+We used $10$ fold cross validation to first choose an optimal number of neighbors, $k$ and found $k = 7$ to be optimal with an error rate of $0.0533$. The true error rate with $k=7$ was $0.0490$ and the true/false positive and negative rates are summarized in the table below. When plotting the cross validation error rates against the chosen $k$, we see a condensed U shape. As we continue to increase $k$ after our optimal choice highlighted in red, there is a continual increase in the error rates. Further, the error rates for the smaller $k$s like $k = \{1,2\}$ are larger but not as large as $k = 100$ which may suggest that the most flexible models do not suffer from over fitting. 
+
+\renewcommand{\arraystretch}{1}
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+library(latex2exp)
+
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.912,0.993,0.00722,0.0884)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+knn_errors = read_csv("~/hospital-costs/lindsayknupp/knn_error_rates.csv")
+
+df = cbind(knn_errors,"k" = seq(1,100))
+
+df = df %>%
+  mutate("1/K" = 1/k)
+
+ggplot(df) +
+  geom_point(aes(x=`1/K`,y=error)) + 
+  geom_point(aes(x=1/7,y=error[7]),color="red") +
+  ggtitle("Error rates using 10 fold CV") + 
+  ylab("Error rates") + 
+  xlab(TeX(r"(larger $K$ $\leftarrow \frac{1}{K} \rightarrow$ smaller $K$)"))
+
 ```
 
 
