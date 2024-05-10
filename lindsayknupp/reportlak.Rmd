@@ -3,6 +3,7 @@ title: "Final Report"
 author: "Lindsay Knupp"
 date: "2024-05-14"
 output: pdf_document
+urlcolor: blue
 ---
 
 ```{r setup, include=FALSE}
@@ -10,6 +11,61 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ## Dataset
+
+Our data was collected from [Centers for Medicare & Medicaid Services](https://data.cms.gov/provider-compliance/cost-report/hospital-provider-cost-report) on April 03, 2024. It features information about hospitals through annual cost reports in $2020$. We were interested in understanding how certain characteristics of hospitals like location, number of full time equivalent employees, or number of beds, for example, affected the hospitals' total operating costs. To perform qualitative analyses, we categorized each hospital as above or below the median. 
+
+While the data is roughly annual, certain hospitals reported for different fiscal year lengths. To normalize, we divided some of our variables by the length of their cost reporting period to obtain daily estimates like average number of inpatients per day or average salary expense per day. Variables that are reported as "averages per day" are denoted with the word "average" in the predictor table below. Some hospitals were listed multiple times with distinct reporting periods. We learned that this could correspond to a change in control of the hospital. For example, the hospital could have been sold and transitioned from a voluntary to a governmental hospital. Duplicate hospitals were left in the dataset and a dummy variable, `duplicate` was added to indicate its status.  
+
+There were $13$ different categories of control ranging from "Voluntary Non-Profit-Church" to "Governmental-Federal". To reduce our number of categories, we re-binned this variable to only include the broad categories: "Voluntary", "Proprietary", and "Governmental". We followed a similar procedure for the $12$ different categories of provider type ranging from "Children" to "Cancer" to "General Long Term". In this case, we re-binned provider type to only distinguish between "General" and "Specialized" care. We classified "General Short Term", "General Long Term", and "Religious Non-Medical Health Care Institution" as "General" care and classified "Cancer", "Psychiatric", "Rehabilitation",
+"Children", "Reserved for Future Use", "Other", "Extended Neoplastic Disease Care", "Indian Health Services", and "Rural Emergency Hospital" as "Specialized" care. 
+
+To improve accuracy on methods like Lasso regression, we scaled our numerical variables using the `scale()` function which centered and scaled our data appropriately. The following table includes the ranges of the predictors and response before they were re-scaled. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+library(knitr)
+library(tidyverse)
+library(kableExtra)
+```
+\renewcommand{\arraystretch}{2}
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+Variables = c("Number of Beds","FTE employees on payroll","Total hospital days",
+                   "Total discharges","Total income","Total assets","Salaries","Inpatients",
+                   "Rural versus Urban","Type of control","Type of provider","Duplicate hospital","Total costs","Costs bin")
+
+
+Range = c("[1-2,791]","[0.05-26,941.09]",
+          "[1-772,819]","[0.0027-462.63]","[-$6,129,919, $11,516,626]",
+           "[-$636,856,458, $29,465,487,958] ","[$128.51, $9,032,294.85]","[0.0033-2123.13]",
+           "[2487 rural, 3225 urban]","[2927 voluntary, 1728 proprietary, 1057 governmental]",
+           "[4779 general, 993 specialized]","[132 duplicates, 5580 non duplicates ]","[$2,718.28, $16,000,980.58]","[2856 above median, 2856 below median]")
+
+Descriptions = c("Total number of available beds including adult beds, pediatric beds, birthing room, and newborn ICU beds",
+                 "Average number of full time-equivalent employees",
+                 "Total number of inpatient days (i.e. days all patients spent in the hospital)",
+                 "Average number of discharges including deaths",
+                 "Average income including net revenue from services given to patients",
+                 "Total current assets",
+                 "Average salary expenses",
+                 "Average number of inpatients",
+                 "Location of hospital defined as rural or urban",
+                 "Type of control under which hospital is conducted",
+                 "Type of services provided",
+                 "Whether or not hospital was listed multiple times",
+                 "Total hospital costs",
+                 "Whether or not total hospital costs was above/below median")
+
+summary = tibble("Variables" = Variables,"Pre-scaled Range" = Range,
+                 "Descriptions" = Descriptions)
+
+summary %>%
+  kable(linesep = "") %>%
+  kable_styling(latex_options = c("striped")) %>% 
+  column_spec(1,width="4cm") %>%
+  column_spec(2,width ="4cm") %>%
+  column_spec(3,width="8cm")  %>%
+  pack_rows("Predictors",1,12) %>%
+  pack_rows("Response",13,14)
+```
 
 
 
