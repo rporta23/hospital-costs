@@ -578,6 +578,13 @@ test_error_boost
 
 ## Neural Network
 
+```{r}
+cv_neural_network <- 0.0721646
+
+testMSE_neural_net <- 0.08771483
+```
+
+
 # Variable Selection
 
 ## Best Subset
