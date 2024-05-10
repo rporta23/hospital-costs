@@ -186,7 +186,7 @@ For independence of errors, it is relatively reasonable to assume that the total
 
 ```{r}
 # model summaries
-map(predictors, ~ summary(lm(total_costs ~ .x, data = df_train)))
+summaries <- map(predictors, ~ summary(lm(total_costs ~ .x, data = df_train)))
 
 simple_models <- map(predictors, ~ lm(total_costs ~ .x, data = df_train))
 ```
@@ -246,108 +246,43 @@ method <- str_c("Marginal LR", " ", predictor_names)
 ```
 
 ```{r}
+coef_ests <- map_dbl(simple_models, ~coef(.x)[[2]])
+
+p_values <- map_dbl(summaries, ~`$`(.x, coefficients)[2,4])
+```
+
+
+### Results
+
+The results of the simple linear regression models are summarized in the table below. The first column of the table represents the estimated Mean Squared Error of Prediction (MSEP) by cross validation. The second column represents the MSEP for the held-out test set. The third column represents the coefficient estimate for the predictor. The fourth column represents the p-value associated with the t-test for whether or not each coefficient estimate is equal to zero. 
+
+
+```{r, include = TRUE}
 summary_table_simple <- tibble(
   method = method,
   cv_error = test_error_vec,
-  test_error = test_MSEP_vec
-)
+  test_error = test_MSEP_vec,
+  coef_est = coef_ests,
+  p_value = p_values
+) |> 
+  mutate_if(is.numeric, ~ round(.x, 3))
 
-summary_table_simple
+knitr::kable(summary_table_simple)
 ```
 
-Number of Beds:
+We notice that almost all of the p-values equal zero, indicating strong evidence that each predictor is truly associated with the response, total costs. The indicator variable for Government control (`control_bin_Governmental`) has a large p-value, but the indicator variable for Proprietary control (`control_bin_Proprietary`) has a small p-value, indicating evidence that in general, the type of control is truly associated with total costs. The only other predictor with a large p-value is duplicate. This indicates that we do not have evidence that change of ownership of a hospital during the fiscal year is related to the total costs of the hospital.
 
-
-```{r, include = TRUE}
-summ(lm(total_costs ~ number_of_beds, data = df_train))
-```
-
-Total Discharges:
-
-
-```{r, include = TRUE}
-summ(lm(total_costs ~ total_discharges, data = df_train))
-```
-
-Salaries:
-
-
-```{r, include = TRUE}
-summ(lm(total_costs ~ salaries, data = df_train))
-```
-
-Type of Control-- Proprietary:
-
-
-```{r, include = TRUE}
-summ(lm(total_costs ~ control_bin_Proprietary, data = df_train))
-```
-
-Type of Control-- Governmental:
-
-
-```{r, include = TRUE}
-summ(lm(total_costs ~ control_bin_Governmental, data = df_train))
-```
-
-Duplicate:
-
-
-```{r, include = TRUE}
-summ(lm(total_costs ~ duplicate, data = df_train))
-```
-
-Number of Employees:
-
-
-```{r, include = TRUE}
-summ(lm(total_costs ~ fte_employees_on_payroll, data = df_train))
-```
-
-Total Income:
-
-
-```{r, include = TRUE}
-summ(lm(total_costs ~ total_income, data = df_train))
-```
-
-Number Inpatients:
-
-
-```{r, include = TRUE}
-summ(lm(total_costs ~ inpatients, data = df_train))
-```
-
-Provider Type:
-
-
-```{r, include = TRUE}
-summ(lm(total_costs ~ provider_bin_Specialized, data = df_train))
-```
-
-Total Days:
-
-
-```{r, include = TRUE}
-summ(lm(total_costs ~ total_days, data = df_train))
-```
-
-Total Assets:
-
-
-```{r, include = TRUE}
-summ(lm(total_costs ~ total_assets, data = df_train))
-```
-
-Rural:
-
-
-```{r, include = TRUE}
-summ(lm(total_costs ~ rural, data = df_train))
-```
-
+Looking at the cross validation (CV) and test errors, we see that they are smallest for the models including number of beds, number of employees, total days, salaries, and inpatients. This indicates that these predictors are more strongly associated with the response than the others.
 
 ## Multiple linear regression
+
+### Assumptions
+
+The assumptions for multiple linear regression are the same as those for simple linear regression outlined in the previous section.
+
+### Results
+
+The results for the main effects multiple linear regression model are summarized below.
 
 
 ```{r}
@@ -374,8 +309,24 @@ test_error_lm
 jtools::summ(mod_mlr)
 ```
 
+The adjusted $R^2$ value of 0.94 indicates that 94 percent of the variability in total costs can be explained by the predictors. This $R^2$ value is quite high. The estimate of the test MSEP using CV is 0.071, and the test MSEP based on the held-out set is 0.106. These error rates are lower than any of the individual marginal linear regression error rates, indicating that when we include all predictors in one model, we can predict total costs more accurately than if we only include one predictor. 
+
+Looking at the coefficient estimates and p-values in the table above, we see that most predictors still have very small p-values, but some which were significant in the marginal linear regressions become insignificant in the multiple linear regression. Specifically, total days, number of beds, and total discharges have large p-values in the multiple regression when all three had very small p-values in the marginal models. This indicates that there is likely correlations between the predictors such that once we have already accounted for some of them, others do not add much further information. This is consistent with the pairs plot which shows strong linear relationships between several pairs of predictors. 
+
 
 ## Multiple linear regression with interactions and transformations: 
+
+Based on our exploratory data analysis, there were no obvious transformations or interactions which were needed in order to satisfy the linear regression assumptions. However, we added a few transformations and interactions for experimentation purposes. For transformations, we added a quadratic term for salaries and total days. For interactions, we added one interaction between number of employees and total income as well as between number of employees and provider type. 
+
+### Assumptions
+
+The assumptions for multiple linear regression are the same as those for simple linear regression outlined in the previous section.
+
+
+### Results
+
+The results for the multiple linear regression model with interactions and transformations are summarized below.
+
 
 ```{r}
 formula <-
@@ -402,8 +353,22 @@ test_error_lm2
 jtools::summ(mod_mlr)
 ```
 
+The adjusted $R^2$ value of 0.94 indicates that this model with transformations and interactions explains about the same proportion of variablity in total costs as the main effects model. One interesting finding, however, is that the p-value for the quadratic term for total days has a significant p-value despite the main-effect for total days not being significant.
+
+
+The estimate of the test MSEP using CV is 0.114, and the test MSEP based on the held-out set is 0.081. These error values are very similar to those for the main effects model.
+
+
 
 ## Regression Tree (with pruning)
+
+### Assumptions
+
+For the regression tree, the only assumption we are making is that the response is continuous. There are no parametric assumptions.
+
+### Results
+
+A plot of the pruned regression tree is displayed below. The optimal pruning size was found to be 9 via cross validation. 
 
 ```{r}
 formula <- as.formula("total_costs ~ .")
@@ -427,6 +392,8 @@ test_error_regtree <- mean((test_data$total_costs - pred)^2)
 
 test_error_regtree
 ```
+
+We see that almost all splits in the tree are made based on the salaries predictor, indicating that salaries is the most important predictor. There are only two other predictors included in the tree, which are number of employees and total income.
 
 
 ```{r}
@@ -464,8 +431,18 @@ text(tree_pruned, cex = 0.6)
 ```
 
 
+The estimate of the test MSEP using CV is 0.144, and the test MSEP based on the held-out set is 0.100. These error values are very similar to those for the multiple linear regression models.
+
 
 ## Bagging
+
+### Assumptions
+
+Bagging involves taking averages across multiple regression trees, so there are no additional assumptions.
+
+### Results
+
+The variable importance metrics for bagging are summarized in the table below. The Mean MSE Increase refers to the average percent increase in MSE when the predictor is excluded. This is computed by permuting the out-of-bag portion of the data. The Node Purity refers to the increase in node purity accounted for by the predictor. For both of these importance measures, a larger value indicates higher importance.
 
 ```{r}
 n_trees <- 300
@@ -497,10 +474,19 @@ test_error_bag
 ```
 
 ```{r, include = TRUE}
-knitr::kable(importance(bag_train))
+table <- importance(bag_train) |> 
+  as.data.frame() |> 
+  rename(`Mean MSE Increase` = `%IncMSE`,
+         `Node Purity Increase` = IncNodePurity
+         )
+
+knitr::kable(table)
 ```
 
-10-fold CV:
+We see that salaries by far has the highest node purity increase and also has the highest mean increase in MSE when the variable is removed. The second most important variable seems to be number of employees. These results are consistent with the plot of the single regression tree, and they indicate that much of the variability in hospital costs can be accounted for by the money spent on paying employees.
+
+The estimate of the test MSEP using CV is 0.071, and the test MSEP based on the held-out set is 0.125. These error values are very similar to those for the multiple linear regression models and the single regression tree.
+
 
 ```{r}
 compute_MSEP_bag <- function(train_data, formula, i) {
@@ -545,6 +531,14 @@ cv_error_bag <- 0.07086356
 ```
 
 ## Random Forest 
+
+### Assumptions
+
+Random Forest involves taking averages across multiple regression trees, so there are no additional assumptions.
+
+### Results
+
+The variable importance metrics for random forest are summarized in the table below. Their interpretation is the same as for bagging.
 
 ```{r}
 compute_error_rf <- function(train_data, formula, i) {
@@ -611,11 +605,31 @@ test_error_rf
 ```
 
 ```{r, include = TRUE}
-knitr::kable(importance(rf_train))
+table <- importance(rf_train) |> 
+  as.data.frame() |> 
+  rename(`Mean MSE Increase` = `%IncMSE`,
+         `Node Purity Increase` = IncNodePurity
+         )
+
+knitr::kable(table)
 ```
 
 
+We see that the ordering of variable importance is similar to that for bagging, with salaries and number of employees being the top two most important. 
+
+The estimate of the test MSEP using CV is 0.012, and the test MSEP based on the held-out set is 0.053. These error values are notably lower than those for the previous methods.
+
 ## Boosting 
+
+### Assumptions
+
+Boosting involves manipulating and combining multiple regression trees, so there are no additional assumptions.
+
+### Results
+
+The tuning parameter was chosen to be 0.1 by cross validation.
+
+The relative influence of each predictor is summarized in the table below. The relative influence for boosting is similar to variable importance for bagging and random forest, but the method for computing it is slightly different. For boosting, the relative influence is computed as follows: for each split in the tree, compute the decrease in MSE. Then, average the improvement for each variable across all trees where that variable is included. A higher relative influence corresponds to a larger average decrease in MSE. A main difference in the computation compared to the Mean MSE Decrease from bagging and random forest is that for boosting, we are computing the mean decrease based on the entire training set, not only the out of bag portions. There is another method for computing importance which uses out of bag samples only, but the method described above is more widely used, so we chose that one.
 
 
 ```{r}
@@ -688,417 +702,65 @@ test_error_boost
 ```
 
 ```{r, include = TRUE}
-knitr::kable(summary.gbm(boost_train, plotit = FALSE)[-1])
+table <- summary.gbm(boost_train, plotit = FALSE)[-1] |> 
+  rename(`Relative Influence` = rel.inf)
+
+knitr::kable(table)
 ```
 
+We see that salaries and number of employees have the highest influence by far compared to the others, consistent with the importance metrics from the previous methods.
+
+The estimate of the test MSEP using CV is 0.092, and the test MSEP based on the held-out set is 0.079. These error values are on the lower side compared to the previous methods, but not as low as for random forest.
 
 ## Neural Network
 
+### Assumptions
+
+The only assumption for the neural network is that the response is continuous. There are no parametric assumptions.
+
+### Results
+
+The estimate of the test MSEP using CV is 0.072, and the test MSEP based on the held-out set is 0.088. These error values are on the lower side compared to the previous methods, but not as low as for random forest.
 
 
 ```{r}
-nvmax <- 12
-```
+cv_error_nn <- 0.0721646
 
-
-```{r}
-regfit_best <- regsubsets(total_costs ~ .,
-  data = select(train_data, -fold),
-  nvmax = nvmax
-)
-summary_regfit <- summary(regfit_best)
-summary_regfit
-```
-
-
-
-```{r}
-response <- "total_costs"
-m <- summary_regfit$which[, -1]
-predictor_names <- colnames(predictors)
-# colnames(m) <- predictor_names
-rhs <- map_chr(1:12, ~ str_c(predictor_names[m[.x, ]], collapse = " + "))
-formulas <- str_c(response, " ~ ", rhs)
-
-cv_error_vec <- map_dbl(formulas, ~ kfold_cv_lm(train_data, formula = .x, k = 10))
-cv_error_vec
-
-optimal_size <- which(cv_error_vec == min(cv_error_vec))
-optimal_size
-
-cv_error_bsub <- cv_error_vec[optimal_size]
-cv_error_bsub
-```
-
-
-
-```{r}
-best_formula <- formulas[optimal_size]
-mod_best <- lm(best_formula, train_data)
-summary(mod_best)
-```
-
-
-
-
-```{r}
-test_error_bsub <- compute_MSEP_test(best_formula, train_data, test_data)
-
-test_error_bsub
-```
-
-
-
-
-```{r}
-# Forward stepwise selection -----
-regfit_fwd <- regsubsets(total_costs ~ .,
-  data = select(train_data, -fold),
-  nvmax = nvmax, method = "forward"
-)
-summary_regfit <- summary(regfit_fwd)
-summary_regfit
-```
-
-
-
-```{r}
-response <- "total_costs"
-m <- summary_regfit$which[, -1]
-predictor_names <- colnames(predictors)
-# colnames(m) <- predictor_names
-rhs <- map_chr(1:12, ~ str_c(predictor_names[m[.x, ]], collapse = " + "))
-formulas <- str_c(response, " ~ ", rhs)
-
-cv_error_vec <- map_dbl(formulas, ~ kfold_cv_lm(train_data, formula = .x, k = 10))
-cv_error_vec
-
-optimal_size <- which(cv_error_vec == min(cv_error_vec))
-optimal_size
-
-cv_error_fwd <- cv_error_vec[optimal_size]
-cv_error_fwd
-```
-
-
-```{r}
-best_formula <- formulas[optimal_size]
-mod_best <- lm(best_formula, train_data)
-summary(mod_best)
-```
-
-
-
-```{r}
-test_error_fwd <- compute_MSEP_test(best_formula, train_data, test_data)
-
-test_error_fwd
-```
-
-
-
-
-```{r}
-# Backward stepwise selection -----
-regfit_bwd <- regsubsets(total_costs ~ .,
-  data = select(train_data, -fold),
-  nvmax = nvmax,
-  method = "backward"
-)
-summary_regfit <- summary(regfit_bwd)
-summary_regfit
-```
-
-
-
-```{r}
-response <- "total_costs"
-m <- summary_regfit$which[, -1]
-predictor_names <- colnames(predictors)
-# colnames(m) <- predictor_names
-rhs <- map_chr(1:12, ~ str_c(predictor_names[m[.x, ]], collapse = " + "))
-formulas <- str_c(response, " ~ ", rhs)
-
-cv_error_vec <- map_dbl(formulas, ~ kfold_cv_lm(train_data, formula = .x, k = 10))
-cv_error_vec
-
-optimal_size <- which(cv_error_vec == min(cv_error_vec))
-optimal_size
-
-cv_error_bwd <- cv_error_vec[optimal_size]
-cv_error_bwd
-```
-
-
-
-```{r}
-best_formula <- formulas[optimal_size]
-mod_best <- lm(best_formula, train_data)
-summary(mod_best)
-```
-
-
-
-```{r}
-test_error_bwd <- compute_MSEP_test(best_formula, train_data, test_data)
-
-test_error_bwd
-```
-
-
-```{r}
-x_train <- model.matrix(total_costs ~ . - fold, data = train_data)[, -1]
-y_train <- train_data$total_costs
-
-x_test <- model.matrix(total_costs ~ ., data = test_data)[, -1]
-y_test <- test_data$total_costs
-```
-
-
-```{r}
-set.seed(1)
-
-lambda_grid <- 10^seq(10, -2, length = 100)
-cv_ridge <-
-  cv.glmnet(
-    x_train,
-    y_train,
-    alpha = 0,
-    lambda = lambda_grid,
-    type.measure = "mse",
-    nfolds = 10 # Set the number of folds to n to get LOOCV
-  )
-
-cv_ridge$lambda.min
-
-lambda_min <- cv_ridge$lambda.min
-```
-
-```{r}
-ridge_reg <- glmnet(x_train, y_train, alpha = 0, lambda = lambda_min)
-coef(ridge_reg)
-```
-
-```{r}
-pred_ridge <- predict(ridge_reg, newx = x_test)
-
-test_error_ridge <- mean((y_test - pred_ridge)^2)
-
-test_error_ridge
-```
-
-
-```{r}
-compute_MSEP_ridge <- function(train_data, lambda, alpha, i) {
-  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
-  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-
-  x_train <- model.matrix(total_costs ~ ., data = current_train_folds)[, -1]
-  y_train <- current_train_folds$total_costs
-
-  x_test <- model.matrix(total_costs ~ ., data = current_test_fold)[, -1]
-  y_test <- current_test_fold$total_costs
-
-  ridge_reg <- glmnet(x_train, y_train, alpha = alpha, lambda = lambda)
-  pred_ridge <- predict(ridge_reg, newx = x_test)
-
-  MSEP <- mean((current_test_fold$total_costs - pred_ridge)^2)
-  return(MSEP)
-}
-
-# compute_MSEP_lm(train_data, formula, i)
-
-kfold_cv_ridge <- function(train_data, lambda, alpha, k = 10) {
-  MSEP_vec <- map_dbl(1:k, ~ compute_MSEP_ridge(train_data, lambda, alpha, .x))
-  avg_MSEP <- mean(MSEP_vec)
-  return(avg_MSEP)
-}
-
-cv_error_ridge <- kfold_cv_ridge(train_data, lambda_min, alpha = 0)
-cv_error_ridge
-```
-
-
-```{r}
-# original training data
-given_sample <- train_data |> select(-fold)
-
-# function to compute bootstrap estimate of SE
-compute_bootstrap_est <- function(given_sample, lambda_min, b) {
-  set.seed(b)
-
-  n <- nrow(given_sample)
-
-  bootstrap_sample_idx <- sample(n, replace = TRUE)
-  Z <- given_sample[bootstrap_sample_idx, , drop = F]
-  x_b <- model.matrix(total_costs ~ ., data = Z)[, -1]
-  y_b <- Z$total_costs
-  modb <- glmnet(x_b, y_b, alpha = 0, lambda = lambda_min)
-  est_coef_ridge <- coef(modb)
-  est_coef_ridge_mat <- t(as.matrix(est_coef_ridge))[, -1]
-
-  return(data.frame(as.list(est_coef_ridge_mat)))
-}
-
-# number of times to repeat bootstrap
-B <- 1000
-
-# compute 1000 bootstrap estimates
-boot_ests <- map_dfr(1:B, ~ compute_bootstrap_est(given_sample, lambda_min, .x))
-
-# compute standard error of bootstrap estimates
-SE_boot <- map_dbl(boot_ests, sd)
-
-SE_boot
-```
-
-```{r}
-# compare to multiple regression
-formula <- as.formula("total_costs ~ .")
-
-mod_mlr <- lm(formula, data = select(train_data, -fold))
-
-SE_ols <- coef(summary(mod_mlr))[, "Std. Error"][-1]
-
-SE_ols
-```
-
-```{r}
-# plot to compare ols to ridge
-data_plot <- tibble(SE_boot, SE_ols)
-
-ggplot(data_plot, aes(x = SE_boot, y = SE_ols)) +
-  geom_point() +
-  labs(
-    title = "Ridge Versus OLS Standard Errors",
-    x = "Ridge (bootstrap) SE",
-    y = "OLS SE"
-  )
-```
-
-
-
-```{r}
-set.seed(1)
-
-# fit lasso model
-lambda_grid <- 10^seq(10, -2, length = 100)
-
-# 10-fold cross validation to choose tuning parameter
-cv_lasso <-
-  cv.glmnet(
-    x_train,
-    y_train,
-    alpha = 1,
-    lambda = lambda_grid,
-    type.measure = "mse",
-    nfolds = 10 # Set the number of folds to n to get LOOCV
-  )
-
-lambda_min <- cv_lasso$lambda.min
-lambda_min
-```
-
-
-```{r}
-# fit lasso model with optimal tuning parameter
-lasso_bestlambda <- glmnet(x_train, y_train, alpha = 1, lambda = lambda_min)
-coef(lasso_bestlambda)
-```
-
-```{r}
-pred_lasso <- predict(lasso_bestlambda, newx = x_test)
-
-test_error_lasso <- mean((y_test - pred_lasso)^2)
-
-test_error_lasso
-```
-
-
-
-```{r}
-cv_error_lasso <- kfold_cv_ridge(train_data, lambda_min, alpha = 1)
-cv_error_lasso
-```
-
-
-
-```{r}
-pcr_fit <- pcr(total_costs ~ .,
-  data = select(train_data, -fold),
-  validation = "CV",
-  segments = 10
-)
-summary(pcr_fit)
-```
-
-```{r}
-validationplot(pcr_fit, val.type = "MSEP")
-```
-
-```{r}
-pred_test <- predict(pcr_fit, test_data, ncomp = 5)
-
-test_error_pcr <- mean((test_data$total_costs - pred_test)^2)
-
-test_error_pcr
-```
-
-
-```{r}
-compute_MSEP_pcr <- function(train_data, i) {
-  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
-  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
-
-  pcr_fit <- pcr(total_costs ~ .,
-    data = current_train_folds,
-    validation = "CV",
-    segments = 10
-  )
-
-  pred <- predict(pcr_fit, current_test_fold, ncomp = 5)
-
-  MSEP <- mean((current_test_fold$total_costs - pred)^2)
-  return(MSEP)
-}
-
-# compute_MSEP_lm(train_data, formula, i)
-
-kfold_cv_pcr <- function(train_data, k = 10) {
-  MSEP_vec <- map_dbl(1:k, ~ compute_MSEP_pcr(train_data, .x))
-  avg_MSEP <- mean(MSEP_vec)
-  return(avg_MSEP)
-}
-
-cv_error_pcr <- kfold_cv_pcr(train_data)
-cv_error_pcr
+test_error_nn <- 0.08771483
 ```
 
 
 # Summary Table Quant Outcome
 
+The below table summarises the error rates for all methods applied to the quantitative response, including all predictors.
+
 ```{r, include = TRUE}
 method <- c(
   "Linear Regression (Main Effects)", "Linear Regression (Transformations)",
-  "Best Subset", "Forward Stepwise", "Backward Stepwise", "Ridge", "Lasso", "PCR", "Regression Tree", "Bagging", "Random Forest", "Boosting"
+  "Regression Tree", "Bagging", "Random Forest", "Boosting", "Neural Network"
 )
 
 cv_error <- c(
-  cv_error_lm, cv_error_lm2, cv_error_bsub, cv_error_fwd,
-  cv_error_bwd, cv_error_ridge, cv_error_lasso, cv_error_pcr,
-  cv_error_regtree, cv_error_bag, cv_error_rf, cv_error_boost
+  cv_error_lm, cv_error_lm2, 
+  cv_error_regtree, cv_error_bag, cv_error_rf, cv_error_boost,
+  cv_error_nn
 )
 
 test_error <- c(
-  test_error_lm, test_error_lm2, test_error_bsub, test_error_fwd,
-  test_error_bwd, test_error_ridge, test_error_lasso, test_error_pcr,
-  test_error_regtree, test_error_bag, test_error_rf, test_error_boost
+  test_error_lm, test_error_lm2, test_error_regtree, 
+  test_error_bag, test_error_rf, test_error_boost,
+  test_error_nn
 )
 
 error_summary <- summary_table_simple |> 
+  select(method, cv_error, test_error) |> 
   bind_rows( tibble(method, cv_error, test_error) ) |> 
   mutate_if(is.numeric, ~ round(.x, 3))
 
 knitr::kable(error_summary)
 ```
+
+We note that the random forest method has the lowest MSEP.
+
+
 
