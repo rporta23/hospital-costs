@@ -1349,7 +1349,22 @@ cv_glm = mean(error_rates)
 Test error 
 ```{r}
 mod <- glm("costs_bin ~ .", data = select(train,-fold),family = binomial)
+
+a = summary(mod)[["coefficients"]]
+Estimate = a[,1]
+Std_error = a[,2]
+z_value = a[,3]
+Pr = a[,4]
+Coefficients = row.names(a)
+
+summary_df = tibble("Coefficients" = Coefficients,"Estimate" = Estimate,
+"Std. Error" = Std_error, "z value" = z_value, "Pr(>|Z|)" = Pr)
+
+write_csv(summary_df,file = "simpleglm_coef.csv")
+
 pred <- round(predict(mod, newdata = select( test, -c(costs_bin) ),type = "response" ))
+
+
   
 model_info = tibble(.rows=1)
 contingency = table(pred,test$costs_bin)

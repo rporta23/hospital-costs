@@ -10,7 +10,7 @@ urlcolor: blue
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Dataset
+# Dataset
 
 Our data was collected from [Centers for Medicare & Medicaid Services](https://data.cms.gov/provider-compliance/cost-report/hospital-provider-cost-report) on April 03, 2024. It features information about hospitals through annual cost reports in $2020$. We were interested in understanding how certain characteristics of hospitals like location, number of full time equivalent employees, or number of beds, for example, affected the hospitals' total operating costs. To perform qualitative analyses, we categorized each hospital as above or below the median. 
 
@@ -68,13 +68,17 @@ summary %>%
   pack_rows("Response",13,14)
 ```
 
-## Qualitative Outcomes 
+# Qualitative Outcome Analyses
 
 For all of our qualitative outcomes, we were trying to predict whether a hospital's total costs were above or below the median. All of the methods' error rates were comparable except for LDA which had the highest misclassification rate at about $17\%$. KNN had no consistent choice of an optimal $k$ across simulations and its variability inspired our simulation study. 
 
-### KNN 
+## KNN 
 
-We used $10$ fold cross validation to first choose an optimal number of neighbors, $k$ and found $k = 7$ to be optimal with an error rate of $0.0533$. The true error rate with $k=7$ was $0.0490$ and the true/false positive and negative rates are summarized in the table below. When plotting the cross validation error rates against the chosen $k$, we see a condensed U shape. As we continue to increase $k$ after our optimal choice highlighted in red, there is a continual increase in the error rates. Further, the error rates for the smaller $k$s like $k = \{1,2\}$ are larger but not as large as $k = 100$ which may suggest that the most flexible models do not suffer from over fitting. 
+### Assumptions 
+We assumed that hospitals with similar predictor values have similar total costs. 
+
+### Results 
+We used $10$ fold cross validation to first choose an optimal number of neighbors, $k$ and found $k = 7$ to be optimal with an error rate of $0.0533$ using Euclidean distance. The true error rate with $k=7$ was $0.0490$ and the true/false positive and negative rates are summarized in the table below. When plotting the cross validation error rates against the chosen $k$, we see a condensed U shape. This may suggest that large $k$ suffers from high inaccuracy but too small $k$ can lead to overfitting.
 
 \renewcommand{\arraystretch}{1}
 ```{r,warning=FALSE,message=FALSE,echo=FALSE}
@@ -111,8 +115,49 @@ ggplot(df) +
 ```
 
 
+## Multiple Logistic Regression 
 
-## Simulation Study 
+### Assumptions 
+We assume that our predictors are not correlated with one another. 
+
+### Results 
+The coefficients and standard errors associated with our model can be found below. 
+We found that `total_discharges`, `total_assets`, `salaries`, `rural`, and `provider_bin_Specialized` were the most statistically significant. Further, most predictors increased the probability of a hospital's total costs being above the median; unsurprisingly, `salaries` stood out the most. A one unit increase in `salaries` increased the log odds of an above median classification by $50.27$. It also produced a $z$ statistic of $21.001$ providing strong evidence of an association between salaries and total costs. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+simpleglm_coef = read_csv("~/hospital-costs/lindsayknupp/simpleglm_coef.csv")
+
+simpleglm_coef = cbind(simpleglm_coef[,1],round(simpleglm_coef[,2:5],2))
+colnames(simpleglm_coef)[5] = "p-value"
+
+kable(simpleglm_coef) %>%
+  kable_styling(latex_options = "striped")
+```
+
+Our estimated and true error rates were pretty close to one another with our cross validation error of $0.073$ and true test error of $0.0333$. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.946,0.989,0.0108,0.0544)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Multiple Logistic Regression with Transformations 
+
+### Assumptions 
+We again assume that our predictors are not correlated with one another.
+
+### Results 
+For our transformation, we decided to look at 
+
+# Simulation Study 
 
 We were interested in understanding how our data affected the optimal choice of $k$ in the $k$ -nearest neighbors algorithm. We already experienced some variability when running our model through on different computers. Therefore, we wanted to see if more simulated datasets would produce the same variablility. 
 
