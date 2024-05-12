@@ -1260,8 +1260,8 @@ neighbors <- 1:100
 # optimal_n <- which.min(knn_error_rates)
 # optimal_error_rate <- knn_error_rates[optimal_n]
 
-# optimal_n <- 7
-# optimal_error_rate <- 0.05329245
+optimal_n <- 7
+optimal_error_rate <- 0.05329245
 
 # cv_knn = optimal_error_rate
 ```
@@ -1364,8 +1364,6 @@ write_csv(summary_df,file = "simpleglm_coef.csv")
 
 pred <- round(predict(mod, newdata = select( test, -c(costs_bin) ),type = "response" ))
 
-
-  
 model_info = tibble(.rows=1)
 contingency = table(pred,test$costs_bin)
 
@@ -1381,11 +1379,75 @@ truepos_glm = model_info$truepos
 trueneg_glm = model_info$trueneg
 falsepos_glm = model_info$falsepos
 falseneg_glm = model_info$falseneg
+
+
 ```
+
+
 
 -   Add polynomial terms or transformations of some of the predictors
 -   Add at least two interaction terms that make sense to you
 
+Transformation model 
+```{r}
+set.seed(1)
+
+train = df_train %>%
+  select(-c(total_costs)) %>%
+  mutate(income_emp = total_income * fte_employees_on_payroll,
+         sal_emp = salaries * fte_employees_on_payroll,
+         total_days_sq = total_days^2,
+         ) %>%
+  select(total_income,fte_employees_on_payroll,salaries,total_days,
+         total_days_sq, income_emp,sal_emp,costs_bin,fold)
+  
+test = df_test %>%
+  select(-c(total_costs)) %>%
+  mutate(income_emp = total_income * fte_employees_on_payroll,
+         sal_emp = salaries * fte_employees_on_payroll,
+         total_days_sq = total_days^2,
+         ) %>%
+  select(total_income,fte_employees_on_payroll,salaries,total_days,
+         total_days_sq, income_emp,sal_emp,costs_bin)
+
+transformation_mod = glm("costs_bin ~ .", data = select(train,-fold),family = binomial)
+
+a = summary(transformation_mod)[["coefficients"]]
+Estimate = a[,1]
+Std_error = a[,2]
+z_value = a[,3]
+Pr = a[,4]
+Coefficients = row.names(a)
+
+summary_df = tibble("Coefficients" = Coefficients,"Estimate" = Estimate,
+"Std. Error" = Std_error, "z value" = z_value, "Pr(>|Z|)" = Pr)
+
+write_csv(summary_df,file = "transglm_coef.csv")
+
+pred <- round(predict(transformation_mod, newdata = select( test, -c(costs_bin) ),type = "response" ))
+
+model_info = tibble(.rows=1)
+contingency = table(pred,test$costs_bin)
+
+model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+model_info$falsepos = 1 - model_info$trueneg
+model_info$falseneg = 1 - model_info$truepos
+
+model_info$error_rate <- mean( (test$costs_bin != pred) )
+
+testMSE_glm = model_info$error_rate
+truepos_glm = model_info$truepos
+trueneg_glm = model_info$trueneg
+falsepos_glm = model_info$falsepos
+falseneg_glm = model_info$falseneg
+
+
+formula = c("costs_bin ~ .")
+error_rates <- map_dbl(1:10, ~compute_MSEP_glm(train, formula, .x))
+cv_trans_glm = mean(error_rates)
+
+```
 ## LDA
 
 ```{r}
@@ -1440,11 +1502,17 @@ cv_lda = (mean(kfold_cv_lda$error))
 
 Test error 
 ```{r}
+train = df_train %>%
+  select(-total_costs)
+
+test = df_test %>%
+  select(-total_costs)
+
 lda_model <- MASS::lda(costs_bin ~ ., data = select(train,-fold))
 lda_pred <- predict(lda_model, newdata = select(test, -c(costs_bin)))$class
   
 model_info = tibble(.rows=1)
-contingency = table(pred,test$costs_bin)
+contingency = table(lda_pred,test$costs_bin)
 
 model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
 model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
@@ -1520,14 +1588,14 @@ qda_model <- MASS::qda(costs_bin ~ ., data = select(train,-fold))
 qda_pred <- predict(qda_model, newdata = select(test, -c(costs_bin)))$class
 
 model_info = tibble(.rows=1)
-contingency = table(pred,test$costs_bin)
+contingency = table(qda_pred,test$costs_bin)
 
 model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
 model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
 model_info$falsepos = 1 - model_info$trueneg
 model_info$falseneg = 1 - model_info$truepos
 
-model_info$error_rate <- mean( (test$costs_bin != lda_pred) )
+model_info$error_rate <- mean( (test$costs_bin != qda_pred) )
 
 testMSE_qda = model_info$error_rate
 truepos_qda = model_info$truepos
@@ -1591,14 +1659,14 @@ nb_model <- e1071::naiveBayes(costs_bin ~ ., data = select(train,-fold))
 nb_pred <- predict(nb_model, newdata = select(test, -c(costs_bin)))
 
 model_info = tibble(.rows=1)
-contingency = table(pred,test$costs_bin)
+contingency = table(nb_pred,test$costs_bin)
 
 model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
 model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
 model_info$falsepos = 1 - model_info$trueneg
 model_info$falseneg = 1 - model_info$truepos
 
-model_info$error_rate <- mean( (test$costs_bin != lda_pred) )
+model_info$error_rate <- mean( (test$costs_bin != nb_pred) )
 
 testMSE_nb = model_info$error_rate
 truepos_nb = model_info$truepos
@@ -1732,6 +1800,7 @@ text(tree.costs)
 tree.pred = predict(tree.costs,test,type="class")
 testerror = mean(  (test$costs_bin != tree.pred)  )
 
+
 # Optimal number of nodes
 cv.costs = cv.tree(tree.costs)
 plot(cv.costs$size, cv.costs$dev, type = "b")
@@ -1755,7 +1824,7 @@ prune.costs.full = prune.tree(tree.costs.full,best=optimalnodesfull)
 prune.pred.full = predict(prune.costs.full,test,type="class")
 testerrorprunefull = mean(  (test$costs_bin != prune.pred.full) )
 ```
-Best number of terminal nodes is 6.
+Best number of terminal nodes is 5.
 
 k fold CV 
 ```{r}
@@ -1764,7 +1833,7 @@ compute_MSEP_regression_tree <- function(train_data,i){
     current_test_fold <- filter(train_data, fold == i)
     
     tree.costs = tree(costs_bin ~ ., data = select(current_train_folds,-fold))
-    prune.costs = prune.tree(tree.costs,best = 6)
+    prune.costs = prune.tree(tree.costs,best = 5)
     
     prune.pred = predict(prune.costs,select(current_test_fold,-fold),type="class")
     
@@ -1777,7 +1846,7 @@ cv_decision_tree = mean(map_dbl(1:10,~compute_MSEP_regression_tree(train,.x)))
 Test error 
 ```{r}
 tree.costs = tree(costs_bin ~ ., data = select(train,-fold))
-prune.costs = prune.tree(tree.costs,best = 6)
+prune.costs = prune.tree(tree.costs,best = 5)
 
 prune.pred = predict(prune.costs,test,type="class")
 
@@ -1843,6 +1912,7 @@ bag.costs <- randomForest(costs_bin ~ ., data = select(train,-fold), mtry = ncol
 bag.pred = predict(bag.costs,test,type="class")
 
 mean_decrease_Gini = importance(bag.costs,type=2)
+
 varImpPlot(bag.costs)
 
 contingency = table(bag.pred,test$costs_bin)

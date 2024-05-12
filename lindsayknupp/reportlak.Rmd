@@ -155,7 +155,181 @@ rates %>%
 We again assume that our predictors are not correlated with one another.
 
 ### Results 
-For our transformation, we decided to look at 
+We decided to transform `total_income`,`fte_employees_on_payroll`, `salaries`, and `total_days` to experiment with how less significant predictors in conjunction with `salaries` affected the response. We computed polynomial models up to degree $2$ for `total_days` and interaction terms between `total_income` & `fte_employees_on_payroll` and between `fte_employees_on_payroll` & `salaries`.
+
+With our smaller model, all of our new predictors were statistically significant with extreme $z$ statistics. However, it is important to note that the standard errors associated with each coefficient were extremely high suggesting a poor fit. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+simpleglm_coef = read_csv("~/hospital-costs/lindsayknupp/transglm_coef.csv")
+
+simpleglm_coef = cbind(simpleglm_coef[,1],round(simpleglm_coef[,2:5],2))
+colnames(simpleglm_coef)[5] = "p-value"
+
+kable(simpleglm_coef) %>%
+  kable_styling(latex_options = "striped")
+```
+
+Compared to our original multiple logistic regression, our true error rate shot up from $0.033$ to $0.158$ and our cross validation error rate shot up from $0.073$ to $0.130$. Interestingly enough though, the model perfectly predicted hospitals whose total costs were below the median with a true negative rate of $100\%$. But, it did misclassify hospitals whose total costs were above the median with a false negative rate of $30.6\%$. Overall, the transformations performed worse than our original multiple logistic model. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.694,1,0,0.306)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## LDA 
+
+### Assumptions 
+We assume that our predictors are drawn from a multivariate normal distribution and both classes share a common covariance matrix. 
+
+### Results
+As stated in the introduction, LDA performed the worst with a cross validation error rate of $0.175$ and a true error rate of $0.165$. This may suggest that our original assumption of our predictors being sampled from a multivariate normal was incorrect or that our classes do not share a common covariance matrix. Further, it is clear that a linear decision boundary is not sufficient to classify hospitals' total costs. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.762,0.913,0.0866,0.238)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+
+## QDA 
+
+### Assumptions 
+We still assume that our predictors are drawn from a multivariate normal distribution but drop the assumption that both classes share a common covariance matrix. 
+
+### Results 
+QDA did not perform much better than LDA with a cross validation error of $0.115$ and a true error rate of $0.119$. However, compared to LDA, QDA did a much better job of accurately classifying hospitals whose total costs were below the median reducing the false positive rate from $8.7\%$ to $1.4\%$. The false negative rates stayed fairly consistent hovering around $\sim 20\%$ in both methods. Overall, QDA is adequate at predicting our class labels. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.782,0.986,0.0144,0.218)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Naive Bayes with Gaussian kernel 
+
+### Assumptions 
+We assume that our predictors are not correlated with one another and are drawn from a multivariate normal distribution given the target class. 
+
+### Results 
+With a Gaussian kernel, the naive Bayes classifier was comparable to QDA. This classifier produced a cross validation error rate of $0.127$ and a true error rate of $0.137$. The misclassification rates were also extremely similar and can be summarized in the table below. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.752,0.982,0.0181,0.248)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Naive Bayes with Kernel Density Estimation
+
+### Assumptions 
+We still assume that our predictors are not correlated with one another but drop the normal distribution assumption. 
+
+### Results 
+Without assuming normality, the Bayes Classifier performs much better with a cross validation error rate of $0.073$ and a true error rate of $0.0806$. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.867,0.975,0.0253,0.133)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Decision Tree with Pruning 
+
+### Assumptions 
+We make no assumptions on the structure of the data. 
+
+### Results 
+We pruned the tree using $5$ terminal nodes which was found to be the optimal number of nodes using cross validation. The cross validation error rate was $0.051$ compared to the true error rate of $0.0595$. We also noticed that the split at the root node immediately determines how each hospital will be classified. If `salaries < -0.305`, then the hospital will be classified as having total costs below the median; otherwise, the hospital will be classified as above the median.  
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+plot(imager::load.image("~/hospital-costs/lindsayknupp/dec_tree.png"), axes = FALSE)
+
+```
+
+The false positive rate was extremely low at $1.4\%$ while the false negative rate was slightly higer at $10\%$.
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.898,0.986,0.0144,0.102)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Bagging 
+
+### Assumptions 
+We again make no assumptions on the structure of the data. 
+
+### Results 
+Bagging reduced our cross-validation error to $0.038$ compared to the decision tree, a factor of about $1.3$. Looking at the importance plot, `salaries` is the most importance variable. If it were to be removed from the tree, an average of $161$ hospitals would be misclassified, given by the mean decrease in accuracy. Further, it's mean decrease of the Gini index is $2234.21$.
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+plot(imager::load.image("~/hospital-costs/lindsayknupp/bagging_tree_imp.png"), axes = FALSE)
+
+```
+
+Bagging also had low misclassification rates with a false positive rate of $1.81\%$ and a false negative rate of $4.08\%$. 
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.959,0.982,0.0181,0.0408)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Random Forest 
+
+### Assumptions
+We again make no assumptions on the structure of the data. 
+
+### Results 
+
+
 
 # Simulation Study 
 
@@ -163,30 +337,37 @@ We were interested in understanding how our data affected the optimal choice of 
 
 To replicate our $13$ predictors and $2$ response variables, we used a package called `faux` to simulate our numerical predictors from a multivariate normal distribution. 
 
-We used a standard normal distribution to replicate our $13$ predictors. 
-
+After $200$, simulations, the chosen $k$ ranged from $[1,90]$, almost the entire range of $k$s that we tried. The data did have a right skew and most simulations chose a $k \in [0,25]$. 
 ```{r,warning=FALSE,message=FALSE,echo=FALSE}
 library(ggplot2)
 library(readr)
+library(gridExtra)
 
 results = read_csv("~/hospital-costs/lindsayknupp/sim_study_results.csv")
 
-ggplot(results) +
+plot1 = ggplot(results) +
   geom_histogram(aes(x=k),bins=15) +
   ggtitle("Optimal k over 200 datasets") +
   xlab("k") + 
   ylab("count")
 
-ggplot(results) +
+plot2 = ggplot(results) +
   geom_point(aes(x=k,y=error)) + 
   ggtitle("Error rates vs optimal k")
 
-ggplot(results) + 
+
+grid.arrange(plot1,plot2,nrow=2)
+
+
+plot3 = ggplot(results) + 
   geom_histogram(aes(x=var),bins=15)
 
-ggplot(results) +
+plot4 = ggplot(results) +
   geom_point(aes(x=k,y=var)) +
   ggtitle("Error variance vs optimal k")
+
+grid.arrange(plot3,plot4,nrow = 2)
+
 
 ```
 

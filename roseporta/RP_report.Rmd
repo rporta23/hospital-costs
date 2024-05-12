@@ -6,7 +6,8 @@ output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, include = FALSE)
+knitr::opts_chunk$set(echo = FALSE, include = FALSE, warning = FALSE,
+                      message = FALSE)
 library(tidyverse)
 library(caret)
 library(class)
@@ -124,15 +125,61 @@ hpc_scaled$set[sample(n, n_test, replace = FALSE)] <- "Test"
 df_train <- hpc_scaled |>
   filter(set == "Train") |>
   select(-set)
+
 df_test <- hpc_scaled |>
   filter(set == "Test") |>
   select(-set)
 ```
 
 
+# Exploratory Data Analysis
+
+In order to get a visual sense of the relationships in the data, we created a few exploratory plots.
+
+The plot below displays the distribution of (scaled) total costs, where the red line represents the median and the blue line represents the mean. We can see that the distribution of total costs is very right-skewed. For this reason, we chose to define our binary response based on whether or not total costs was above the median, not the mean.
+
+```{r, include = TRUE}
+ggplot(hpc_scaled, aes(x = total_costs)) +
+  geom_histogram() +
+  geom_vline(xintercept = median(hpc_scaled$total_costs), color = "red") + 
+  geom_vline(xintercept = mean(hpc_scaled$total_costs), color = "blue")
+```
+
+The pairs plots below visualize the relationships between all variables in the data (using the scaled data). We separated the data into two pairs plots, one including only numeric predictors and one including only categorical predictors, in order to see the relationships more clearly.
+  
+
+```{r, include = TRUE}
+quant_plot <- hpc_scaled |> 
+  select(-c(
+    control_bin_Governmental, control_bin_Proprietary,
+    provider_bin_Specialized, rural, duplicate,
+    set
+  ))
+
+pairs(quant_plot)
+```
+
+In the plot above visualizing the relationships between all numeric predictors and the response, we find that total costs appears to have fairly strong positive linear relationships with the following predictors: employees on payroll, total days, bed days, total discharges, and salaries. Total costs appears to have weak or no relationship with total income and total assets. For the binary response, the predictors which have positive relationships with total cost have a pattern such that binary costs = 0 corresponds to a higher concentration of points with low values of the predictor, and binary costs = 1 corresponds to a wider range of values for the predictor. This same pattern shows up also for total assets and total income, which did not look associated with continuous total cost.
+
+Further, we find very high pairwise positive collinearity between (1) total days, bed days, and total discharges, and (2) salaries and employees on payroll.
+
+Interestingly, despite total costs being so skewed, the relationships between each predictor and the response look very linear, and none of them appear non-linear.
+
+```{r, include = TRUE}
+qual_plot <- hpc_scaled |> 
+  select(
+    control_bin_Governmental, control_bin_Proprietary,
+    provider_bin_Specialized, rural, costs_bin, duplicate, total_costs
+    )
+
+pairs(qual_plot)
+```
+
+Looking at the categorical predictors above, it is less obvious to see relationships between the predictors and response, but there does appear to be some relationship between duplicate and total costs as well as between proprietary control and total costs. For each of these relationships, it seems that when the predictor value equals zero, the total costs are low, while when the predictor value equals one, there is more. of a range of total costs values. However, it is hard to tell if this is a true relationship or if it simply results from unequal numbers of observations in each predictor category. Most total costs values are small, so if there are a smaller number of data points in one category, it would be likely that most of those have small total costs values, while if there are more points in a category, it would look like a wider range.
+
+Focusing on the plot of total costs against binary cost (the two response variables), we notice that all total costs values below the median are very small, while those above the median have a much wider range of values. This reflects the skewness of total costs visualized above. 
 
 # Quantitative Outcome Analyses
-
 
 
 ```{r}
@@ -730,7 +777,7 @@ test_error_nn <- 0.08771483
 ```
 
 
-# Summary Table Quant Outcome
+# Summary Table Quantitative Outcome
 
 The below table summarises the error rates for all methods applied to the quantitative response, including all predictors.
 
