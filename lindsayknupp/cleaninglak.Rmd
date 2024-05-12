@@ -1912,6 +1912,7 @@ bag.costs <- randomForest(costs_bin ~ ., data = select(train,-fold), mtry = ncol
 bag.pred = predict(bag.costs,test,type="class")
 
 mean_decrease_Gini = importance(bag.costs,type=2)
+
 varImpPlot(bag.costs)
 
 contingency = table(bag.pred,test$costs_bin)

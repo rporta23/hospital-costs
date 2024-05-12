@@ -298,8 +298,37 @@ rates %>%
 ## Bagging 
 
 ### Assumptions 
+We again make no assumptions on the structure of the data. 
 
 ### Results 
+Bagging reduced our cross-validation error to $0.038$ compared to the decision tree, a factor of about $1.3$. Looking at the importance plot, `salaries` is the most importance variable. If it were to be removed from the tree, an average of $161$ hospitals would be misclassified, given by the mean decrease in accuracy. Further, it's mean decrease of the Gini index is $2234.21$.
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+plot(imager::load.image("~/hospital-costs/lindsayknupp/bagging_tree_imp.png"), axes = FALSE)
+
+```
+
+Bagging also had low misclassification rates with a false positive rate of $1.81\%$ and a false negative rate of $4.08\%$. 
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.959,0.982,0.0181,0.0408)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Random Forest 
+
+### Assumptions
+We again make no assumptions on the structure of the data. 
+
+### Results 
+
 
 
 # Simulation Study 
@@ -308,30 +337,37 @@ We were interested in understanding how our data affected the optimal choice of 
 
 To replicate our $13$ predictors and $2$ response variables, we used a package called `faux` to simulate our numerical predictors from a multivariate normal distribution. 
 
-We used a standard normal distribution to replicate our $13$ predictors. 
-
+After $200$, simulations, the chosen $k$ ranged from $[1,90]$, almost the entire range of $k$s that we tried. The data did have a right skew and most simulations chose a $k \in [0,25]$. 
 ```{r,warning=FALSE,message=FALSE,echo=FALSE}
 library(ggplot2)
 library(readr)
+library(gridExtra)
 
 results = read_csv("~/hospital-costs/lindsayknupp/sim_study_results.csv")
 
-ggplot(results) +
+plot1 = ggplot(results) +
   geom_histogram(aes(x=k),bins=15) +
   ggtitle("Optimal k over 200 datasets") +
   xlab("k") + 
   ylab("count")
 
-ggplot(results) +
+plot2 = ggplot(results) +
   geom_point(aes(x=k,y=error)) + 
   ggtitle("Error rates vs optimal k")
 
-ggplot(results) + 
+
+grid.arrange(plot1,plot2,nrow=2)
+
+
+plot3 = ggplot(results) + 
   geom_histogram(aes(x=var),bins=15)
 
-ggplot(results) +
+plot4 = ggplot(results) +
   geom_point(aes(x=k,y=var)) +
   ggtitle("Error variance vs optimal k")
+
+grid.arrange(plot3,plot4,nrow = 2)
+
 
 ```
 
