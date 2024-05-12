@@ -3,11 +3,12 @@ title: "Report Section"
 author: "Johnny Rasnic"
 date: "2024-05-12"
 output:
-  pdf_document: default
   html_document: default
+  pdf_document: default
 ---
 
 ```{r echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warnings=FALSE)
 library(tidyverse)
 hpc = read_csv(here::here("hpc.csv"))
 #summary(hpc)
@@ -421,9 +422,9 @@ library(glmnet)
 
 X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
 
-B = 1000
+B = 100
 
-coeffs = matrix(rep(0,B*13), nrow=B)
+coeffs = matrix(rep(0,B*14), nrow=B)
 
 for (i in 1:B) {
   x = X[sample(nrow(x), nrow(x), replace = TRUE),]
@@ -445,15 +446,15 @@ for (i in 1:B) {
                        lambda = lambda,
                        nfolds=10)
   
-  for (j in 1:13)
+  for (j in 1:14)
  coeffs[i,j] = coef(ridge_model)[j]
 }
 
-coeffs_mean = coeffs |> as_tibble() |> summarize(across(V1:V13,mean))
+coeffs_mean = coeffs |> as_tibble() |> summarize(across(V1:V14,mean))
 
-se = rep(0,13)
+se = rep(0,14)
 
-for (i in 1:13) {
+for (i in 1:14) {
   se[i] = sqrt((1/(B-1))*sum((coeffs[,1]) -coeffs_mean[i])^2)
 }
 
