@@ -1260,8 +1260,8 @@ neighbors <- 1:100
 # optimal_n <- which.min(knn_error_rates)
 # optimal_error_rate <- knn_error_rates[optimal_n]
 
-# optimal_n <- 7
-# optimal_error_rate <- 0.05329245
+optimal_n <- 7
+optimal_error_rate <- 0.05329245
 
 # cv_knn = optimal_error_rate
 ```
@@ -1379,6 +1379,8 @@ truepos_glm = model_info$truepos
 trueneg_glm = model_info$trueneg
 falsepos_glm = model_info$falsepos
 falseneg_glm = model_info$falseneg
+
+
 ```
 
 
@@ -1440,18 +1442,12 @@ trueneg_glm = model_info$trueneg
 falsepos_glm = model_info$falsepos
 falseneg_glm = model_info$falseneg
 
+
+formula = c("costs_bin ~ .")
+error_rates <- map_dbl(1:10, ~compute_MSEP_glm(train, formula, .x))
+cv_trans_glm = mean(error_rates)
+
 ```
-
-Johnny's model
-```{r}
-
-logit_model = glm("costs_bin ~ fte_employees_on_payroll * total_income + provider_bin_Specialized*fte_employees_on_payroll",data = select(train,-fold),family = binomial)
-
-summary(logit_model)
-```
-
-
-
 ## LDA
 
 ```{r}
@@ -1506,11 +1502,17 @@ cv_lda = (mean(kfold_cv_lda$error))
 
 Test error 
 ```{r}
+train = df_train %>%
+  select(-total_costs)
+
+test = df_test %>%
+  select(-total_costs)
+
 lda_model <- MASS::lda(costs_bin ~ ., data = select(train,-fold))
 lda_pred <- predict(lda_model, newdata = select(test, -c(costs_bin)))$class
   
 model_info = tibble(.rows=1)
-contingency = table(pred,test$costs_bin)
+contingency = table(lda_pred,test$costs_bin)
 
 model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
 model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])

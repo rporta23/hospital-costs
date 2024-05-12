@@ -184,6 +184,49 @@ rates %>%
   kable_styling()
 ```
 
+## LDA 
+
+### Assumptions 
+We assume that our predictors are drawn from a multivariate normal distribution and both classes share a common covariance matrix. 
+
+### Results
+As stated in the introduction, LDA performed the worst with a cross validation error rate of $0.175$ and a true error rate of $0.165$. This may suggest that our original assumption of our predictors being sampled from a multivariate normal was incorrect or that our classes do not share a common covariance matrix. Further, it is clear that a linear decision boundary is not sufficient to classify hospitals' total costs. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.762,0.913,0.0866,0.238)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+
+## QDA 
+
+### Assumptions 
+We still assume that our predictors are drawn from a multivariate normal distribution but drop the assumption that both classes share a common covariance matrix. 
+
+### Results 
+QDA did not perform much better than LDA with a cross validation error of $0.115$ and a true error rate of $0.119$. However, compared to LDA, QDA did a much better job of accurately classifying hospitals whose total costs were below the median reducing the false positive rate from $8.7\%$ to $1.4\%$. The false negative rates stayed fairly consistent hovering around $\sim 20\%$. Overall, QDA is adequate at predicting our class labels. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.782,0.986,0.0144,0.218)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
 
 
 # Simulation Study 
