@@ -1,0 +1,465 @@
+---
+title: "Report Section"
+author: "Johnny Rasnic"
+date: "2024-05-12"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r echo=FALSE}
+library(tidyverse)
+hpc = read_csv(here::here("hpc.csv"))
+#summary(hpc)
+
+hpcdf = hpc |> 
+  mutate(start = as.Date(`Fiscal Year Begin Date`),end = as.Date(`Fiscal Year End Date`)) |> 
+  mutate(days = as.numeric(end - start)) |> 
+  mutate(numBeds = `Total Bed Days Available`/days,id = row_number())
+```
+
+```{r echo=FALSE}
+hpc_clean <- hpcdf |>
+  janitor::clean_names() |>
+  select(provider_ccn, days, number_of_beds,
+    total_costs, rural_versus_urban, provider_type, type_of_control,
+    fte_employees_on_payroll,
+    total_days = total_days_v_xviii_xix_unknown,
+    total_discharges = total_discharges_v_xviii_xix_unknown,
+    total_income, total_assets,
+    salaries = total_salaries_from_worksheet_a
+  ) |>
+  na.omit() |>
+  mutate(
+    rural = ifelse(rural_versus_urban == "R", 1, 0),
+    control_bin = case_when(
+      type_of_control < 3 ~ "Voluntary",
+      (type_of_control >= 3 & type_of_control < 7) ~ "Proprietary",
+      type_of_control >= 7 ~ "Governmental"
+    ),
+    provider_bin = ifelse(provider_type < 3 |
+      provider_type == 6,
+    "General", "Specialized"
+    ),
+  ) |>
+  select(-c(rural_versus_urban, type_of_control, provider_type))
+
+duplicates <- hpc_clean |>
+  group_by(provider_ccn) |>
+  summarise(count = n()) |>
+  filter(count > 1)
+
+dup <- map_lgl(hpc_clean$provider_ccn, `%in%`, duplicates$provider_ccn)
+
+hpc_clean$duplicate <- as.numeric(dup)
+
+hpc_normalize <- hpc_clean |>
+  mutate(
+    total_costs = total_costs / days,
+    inpatients = total_days / days,
+    total_discharges = total_discharges / days,
+    total_income = total_income / days,
+    salaries = salaries / days
+  )
+```
+
+```{r echo=FALSE}
+hpc_dummies = hpc_normalize |> 
+  select(-c(provider_ccn, days)) |> 
+  mutate(
+    costs_bin = ifelse(total_costs > median(total_costs), 1, 0)
+    ) |> 
+  tidytable::get_dummies(drop_first = TRUE) |> 
+  select(where(is.numeric))
+```
+
+# Train-test Split
+
+```{r echo=FALSE}
+set.seed(1)
+
+train_prop = 0.9
+
+n = nrow(hpc_dummies)
+n_train = train_prop*n
+n_test = n - n_train
+
+hpc_dummies$set = "Train"
+hpc_dummies$set[sample(n, n_test, replace = FALSE)] = "Test"
+```
+
+# 10-fold split
+
+```{r echo=FALSE}
+set.seed(1)
+folds = floor(seq(1,11, length.out=nrow(hpc_dummies)+1))[1:nrow(hpc_dummies)]
+folds = sample(folds, length(folds))
+
+hpc_dummies$fold = folds
+```
+
+# Normalize quantitative variables
+
+```{r echo=FALSE}
+hpc_quant = hpc_dummies |> select(-c(provider_bin_Specialized, control_bin_Governmental, control_bin_Voluntary, costs_bin, rural, set, fold))
+
+hpc_qual = hpc_dummies |> select(c(provider_bin_Specialized, control_bin_Governmental, control_bin_Voluntary, costs_bin, rural, set, fold))
+
+hpc_scaled = as_tibble(scale(hpc_quant) |> cbind(hpc_qual))
+
+df_train = hpc_scaled |>  filter(set == "Train") |> select(-c(set, fold))
+df_test = hpc_scaled |> filter(set == "Test") |> select(-c(set, fold))
+```
+
+# Variable Selection
+
+## Best Subset
+
+In the plots below, we can see what variables are selected depending on what criterion we wish to use ($R^2$, adjusted $R^2$,etc.) for the full dataset. For the last plot, we run 10-fold CV to find the best model size to minimize the test MSE averaged across the folds. As we can see, we gain a significant reduction in the MSE from adding a non-intercept term, however, after that, the gains from additional variables in the model are comparatively quite small. Based on the 10-fold CV, we choose a model with 8 variables.
+
+```{r, echo=FALSE}
+library(leaps)
+
+X = hpc_scaled |> select(-c(fold,set, costs_bin))
+
+erates = matrix(rep(0, 10*12), nrow = 10, ncol = 12)
+
+best_subset = regsubsets(total_costs ~ ., data = X, nvmax = ncol(X))
+
+plot(best_subset, scale="r2")
+plot(best_subset, scale="adjr2")
+plot(best_subset, scale="Cp")
+plot(best_subset, scale="bic")
+
+for (i in 1:10) {
+  train.X = hpc_scaled |> filter(fold != i) |> select(-c(costs_bin, set, fold))
+  test.X = hpc_scaled |> filter(fold == i) |> select(-c(costs_bin, set, fold))
+  best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X))
+  summ = summary(best_subset)
+  for (j in 1:ncol(train.X)-1) {
+    selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][j,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+    temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    erates[i,j] = mean((pred - test.X$total_costs)^2)
+  }
+}
+
+erates = as_tibble(erates) |> summarize(across(V1:V12,mean))
+
+plot(1:12, erates[1,], 
+     col = ifelse(1:12 == which.min(erates), "red", "black"),
+     xlab = "Model Size",
+     ylab = "Average Test MSE")
+
+title("Best Subset Selection")
+
+data = hpc_scaled |> select(-c(fold,set,costs_bin))
+
+best_subset = regsubsets(total_costs ~ ., data = data)
+
+coeffs = as.matrix(coef(best_subset, 8))
+colnames(coeffs) = c("Coefficient Estimate")
+
+coeffs
+```
+
+## Forward Stepwise
+
+We see near identical results between the exhaustive best subsets and the forward/backward stepwise methods.
+
+```{r echo=FALSE}
+library(leaps)
+
+X = hpc_scaled
+
+best_subset = regsubsets(total_costs ~ ., data = X, nvmax = ncol(train.X))
+
+plot(best_subset, scale="r2")
+plot(best_subset, scale="adjr2")
+plot(best_subset, scale="Cp")
+plot(best_subset, scale="bic")
+
+erates = matrix(rep(0, 10*12), nrow = 10, ncol = 12)
+
+for (i in 1:10) {
+  train.X = hpc_scaled |> filter(fold != i) |> select(-c(costs_bin, set, fold))
+  test.X = hpc_scaled |> filter(fold == i) |> select(-c(costs_bin, set, fold))
+  best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X), method="forward")
+  summ = summary(best_subset)
+  for (j in 1:ncol(train.X)-1) {
+    selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][j,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+    temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    erates[i,j] = mean((pred - test.X$total_costs)^2)
+  }
+}
+
+erates = as_tibble(erates) |> summarize(across(V1:V12,mean))
+
+plot(1:12, erates[1,], 
+     col = ifelse(1:12 == which.min(erates), "red", "black"),
+     xlab = "Model Size",
+     ylab = "Average Test MSE")
+
+title("Forward Stepwise Selection")
+
+data = hpc_scaled |> select(-c(fold,set,costs_bin))
+
+best_subset = regsubsets(total_costs ~ ., data = data)
+
+coeffs = as.matrix(coef(best_subset, 8))
+colnames(coeffs) = c("Coefficient Estimate")
+
+coeffs
+```
+
+## Backward Stepwise
+
+```{r, echo=FALSE}
+library(leaps)
+
+train.X = hpc_scaled |> filter(set == "Train") |> select(-c(costs_bin, set, fold))
+test.X = hpc_scaled |> filter(set == "Test") |> select(-c(costs_bin, set, fold))
+
+best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X))
+
+plot(best_subset, scale="r2")
+plot(best_subset, scale="adjr2")
+plot(best_subset, scale="Cp")
+plot(best_subset, scale="bic")
+
+erates = matrix(rep(0, 10*12), nrow = 10, ncol = 12)
+
+for (i in 1:10) {
+  train.X = hpc_scaled |> filter(fold != i) |> select(-c(costs_bin, set, fold))
+  test.X = hpc_scaled |> filter(fold == i) |> select(-c(costs_bin, set, fold))
+  best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X), method="backward")
+  summ = summary(best_subset)
+  for (j in 1:ncol(train.X)-1) {
+    selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][j,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+    temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    erates[i,j] = mean((pred - test.X$total_costs)^2)
+  }
+}
+
+erates = as_tibble(erates) |> summarize(across(V1:V12,mean))
+
+plot(1:12, erates[1,], 
+     col = ifelse(1:12 == which.min(erates), "red", "black"),
+     xlab = "Model Size",
+     ylab = "Average Test MSE")
+
+title("Backward Stepwise Selection")
+
+data = hpc_scaled |> select(-c(fold,set,costs_bin))
+
+best_subset = regsubsets(total_costs ~ ., data = data)
+
+coeffs = as.matrix(coef(best_subset, 8))
+colnames(coeffs) = c("Coefficient Estimate")
+
+coeffs
+```
+
+## Ridge regression (find the best tuning parameter using cross-validation)
+
+### Quantitative
+
+```{r echo=FALSE}
+library(glmnet)
+
+set.seed(1)
+
+train.X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
+x = scale(model.matrix(total_costs ~ ., data = train.X)[ , -1])
+
+lambda_grid = 10 ^ seq(10, -2, length = 100)
+ridge_reg = cv.glmnet(x, hpc_scaled$total_costs, alpha = 0, type.measure = "mse", lambda = lambda_grid, nfolds=10)
+lambda = ridge_reg$lambda.min
+
+ridge_model = glmnet(x, hpc_scaled$total_costs,alpha = 0, lambda = lambda, nfolds=10)
+
+coeffs = coef(ridge_model)
+
+colnames(coeffs) = c("Coefficient Estimate")
+
+coeffs
+```
+
+### Qualitative
+
+```{r echo=FALSE}
+library(glmnet)
+
+set.seed(1)
+
+train.X = hpc_scaled |> select(-c("total_costs", "set", "fold"))
+x = scale(model.matrix(costs_bin ~ ., data = train.X)[ , -1])
+
+lambda_grid = 10 ^ seq(10, -2, length = 100)
+ridge_reg = cv.glmnet(x, hpc_scaled$costs_bin, alpha = 0, family="binomial", lambda = lambda_grid, nfolds=10)
+lambda = ridge_reg$lambda.min
+
+ridge_model = glmnet(x, hpc_scaled$costs_bin,alpha = 0, lambda = lambda, nfolds=10)
+
+coeffs = coef(ridge_model)
+
+colnames(coeffs) = c("Coefficient Estimate")
+
+coeffs
+```
+
+## Lasso (find the best tuning parameter using cross-validation)
+
+### Quantitative
+
+Below we have the Lasso selection results for predicting total costs. We can notice it selects 9 variables to have non-zero coefficients, which is close to the best model found with regsubsets.
+
+```{r echo=FALSE}
+library(glmnet)
+
+set.seed(1)
+
+train.X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
+x = scale(model.matrix(total_costs ~ ., data = train.X)[ , -1])
+
+lambda_grid = 10 ^ seq(10, -2, length = 100)
+lasso_reg = cv.glmnet(x, hpc_scaled$total_costs, alpha = 1, type.measure = "mse", lambda = lambda_grid, nfolds=10)
+
+lambda = lasso_reg$lambda.min
+
+lasso_model = glmnet(x, hpc_scaled$total_costs, alpha = 1, lambda = lambda, nfolds=10)
+
+coeffs = coef(lasso_model)
+
+colnames(coeffs) = c("Coefficient Estimate")
+
+coeffs
+```
+
+### Qualitative
+
+```{r echo=FALSE}
+library(glmnet)
+
+set.seed(1)
+
+train.X = hpc_scaled |> select(-c("total_costs", "set", "fold"))
+x = scale(model.matrix(costs_bin ~ ., data = train.X)[ , -1])
+
+lambda_grid = 10 ^ seq(10, -2, length = 100)
+lasso_reg = cv.glmnet(x, hpc_scaled$costs_bin, alpha = 1, family="binomial", lambda = lambda_grid, nfolds=10)
+
+lambda = lasso_reg$lambda.min
+
+lasso_model = glmnet(x, hpc_scaled$costs_bin, alpha = 1, lambda = lambda, nfolds=10)
+
+coeffs = coef(lasso_model)
+
+colnames(coeffs) = c("Coefficient Estimate")
+
+coeffs
+```
+
+## Principal Components Regression (PCR)
+
+```{r echo=FALSE}
+library(pls)
+
+train.X = df_train 
+
+test.X = df_test
+
+pcr_model = pcr(total_costs ~ ., data = train.X)
+
+pred = predict(pcr_model, newdata = test.X)
+
+print(paste("Test MSE for train-test split:", mean((pred - test.X$total_costs)^2)))
+
+erates = rep(0,10)
+
+for (i in 1:10) { train.X = hpc_scaled |> filter(fold != i) |> select(-c(set,fold,costs_bin)) 
+test.X = hpc_scaled |> filter(fold == i) |> select(-c(set,fold,costs_bin))
+
+pcr_model = pcr(total_costs ~ ., data = train.X)
+
+pred = predict(pcr_model, newdata = test.X)
+
+erates[i] = mean((pred - test.X$total_costs)^2) }
+
+print(paste("Average Test MSE across 10-folds:", mean(erates)))
+
+```
+
+# Bootstrap SEs
+
+Our bootstrap study looks at the standard errors of the coefficient estimates found through ridge regression, with 1000 bootstrap samples. Our data is scaled, which is why our standard errors are all approximately the same magnitude.
+
+```{r echo=FALSE}
+library(boot)
+library(glmnet)
+
+X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
+
+B = 1000
+
+coeffs = matrix(rep(0,B*13), nrow=B)
+
+for (i in 1:B) {
+  x = X[sample(nrow(x), nrow(x), replace = TRUE),]
+  
+  x = scale(model.matrix(total_costs ~ ., data = x)[ , -1])
+  
+  lambda_grid = 10 ^ seq(10, -2, length = 100)
+  
+  ridge_reg = cv.glmnet(x, hpc_scaled$total_costs,
+                        alpha = 0, 
+                        type.measure = "mse", 
+                        lambda = lambda_grid, 
+                        nfolds=10)
+  
+  lambda = ridge_reg$lambda.min
+  
+  ridge_model = glmnet(x, hpc_scaled$total_costs,
+                       alpha = 0,
+                       lambda = lambda,
+                       nfolds=10)
+  
+  for (j in 1:13)
+ coeffs[i,j] = coef(ridge_model)[j]
+}
+
+coeffs_mean = coeffs |> as_tibble() |> summarize(across(V1:V13,mean))
+
+se = rep(0,13)
+
+for (i in 1:13) {
+  se[i] = sqrt((1/(B-1))*sum((coeffs[,1]) -coeffs_mean[i])^2)
+}
+
+se = as.matrix(se, ncol=1)
+
+row.names(se) = dimnames(coef(ridge_model))[[1]]
+colnames(se) = c("Bootstrap Standard Error Estimate")
+
+se
+```

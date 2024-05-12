@@ -11,7 +11,7 @@ library(tidyverse)
 library(GGally)
 ```
 
-```{r}
+```{r echo=FALSE}
 hpc = read_csv(here::here("hpc.csv"))
 #summary(hpc)
 
@@ -21,70 +21,52 @@ hpcdf = hpc |>
   mutate(numBeds = `Total Bed Days Available`/days,id = row_number())
 ```
 
-```{r}
-hpc_clean = hpcdf |> 
-  janitor::clean_names() |> 
+```{r echo=FALSE}
+hpc_clean <- hpcdf |>
+  janitor::clean_names() |>
   select(provider_ccn, days, number_of_beds,
-         total_costs, rural_versus_urban, provider_type, type_of_control,
-         fte_employees_on_payroll, total_days = total_days_v_xviii_xix_unknown,
-         total_discharges = total_discharges_v_xviii_xix_unknown,
-         total_income, total_assets,
-         salaries = total_salaries_from_worksheet_a) |> 
-  na.omit() |> 
-  mutate(rural = ifelse(rural_versus_urban == "R", 1, 0),
-         control_bin = case_when(
-           type_of_control < 3 ~ "Voluntary",
-           (type_of_control >= 3 & type_of_control < 7) ~ "Proprietary",
-           type_of_control >= 7 ~ "Governmental"
-         ),
-         provider_bin = ifelse(provider_type < 3 |
-                                 provider_type == 6,
-                               "General", "Specialized"
-                               ),
-         ) |> 
-  select(- c(rural_versus_urban, type_of_control, provider_type))
+    total_costs, rural_versus_urban, provider_type, type_of_control,
+    fte_employees_on_payroll,
+    total_days = total_days_v_xviii_xix_unknown,
+    total_discharges = total_discharges_v_xviii_xix_unknown,
+    total_income, total_assets,
+    salaries = total_salaries_from_worksheet_a
+  ) |>
+  na.omit() |>
+  mutate(
+    rural = ifelse(rural_versus_urban == "R", 1, 0),
+    control_bin = case_when(
+      type_of_control < 3 ~ "Voluntary",
+      (type_of_control >= 3 & type_of_control < 7) ~ "Proprietary",
+      type_of_control >= 7 ~ "Governmental"
+    ),
+    provider_bin = ifelse(provider_type < 3 |
+      provider_type == 6,
+    "General", "Specialized"
+    ),
+  ) |>
+  select(-c(rural_versus_urban, type_of_control, provider_type))
 
-duplicates = hpc_clean |> 
-  group_by(provider_ccn) |> 
-  summarise(count = n()) |> 
+duplicates <- hpc_clean |>
+  group_by(provider_ccn) |>
+  summarise(count = n()) |>
   filter(count > 1)
 
-dup = map_lgl(hpc_clean$provider_ccn, `%in%`, duplicates$provider_ccn)
+dup <- map_lgl(hpc_clean$provider_ccn, `%in%`, duplicates$provider_ccn)
 
-hpc1 = hpc_clean |> 
-  filter(!dup)
+hpc_clean$duplicate <- as.numeric(dup)
 
-hpc2 = hpc_clean |> 
-  filter(dup) |> 
-  group_by(provider_ccn) |> 
-  summarise(
-    days = sum(days),
-    number_of_beds = mean(number_of_beds),
-    total_costs = sum(total_costs),
-    fte_employees_on_payroll = mean(fte_employees_on_payroll),
-    total_days = sum(total_days),
-    total_discharges = sum(total_discharges),
-    total_income = sum(total_income),
-    total_assets = mean(total_assets),
-    salaries = sum(salaries),
-    rural = max(rural),
-    control_bin = max(control_bin),
-    provider_bin = max(provider_bin)
-  )
-
-hpc_all = bind_rows(hpc1, hpc2)
-
-hpc_normalize = hpc_all |> 
+hpc_normalize <- hpc_clean |>
   mutate(
-    total_costs = total_costs/days,
-    inpatients = total_days/days,
-    total_discharges = total_discharges/days,
-    total_income = total_income/days,
-    salaries = salaries/days
-    )
+    total_costs = total_costs / days,
+    inpatients = total_days / days,
+    total_discharges = total_discharges / days,
+    total_income = total_income / days,
+    salaries = salaries / days
+  )
 ```
 
-```{r}
+```{r echo=FALSE}
 hpc_dummies = hpc_normalize |> 
   select(-c(provider_ccn, days)) |> 
   mutate(
@@ -150,7 +132,7 @@ Codes for Provider Type:
 
 # Exploratory Analysis
 
-```{r}
+```{r echo=FALSE}
 ggplot(hpc_clean, aes(x = total_costs)) +
   geom_histogram() +
   geom_vline(xintercept = median(hpc_clean$total_costs), color = "red") + 
@@ -168,13 +150,13 @@ Red line = median, blue line = mean
 
 Summary Statistics:
 
-```{r}
+```{r echo=FALSE}
 summary(hpc_clean)
 ```
 
 Pairs plot:
 
-```{r}
+```{r echo=FALSE}
 # # code to generate and save 4K resolution pairwise plot
 # png("pairs.png", width=3840, height=2160)
 # ggpairs(hpc_dummies)
@@ -183,7 +165,7 @@ Pairs plot:
 # Try pairs plot with log of total costs
 data_pairs = hpc_dummies |>
   select(-c(rural, costs_bin, control_bin_Governmental,
-            control_bin_Proprietary, provider_bin_Specialized)
+            control_bin_Voluntary, provider_bin_Specialized)
          ) |>
   mutate(total_costs = log(total_costs))
 
@@ -207,7 +189,7 @@ ggpairs(data_pairs, progress = FALSE)
 
 # Train-test Split
 
-```{r}
+```{r echo=FALSE}
 set.seed(1)
 
 train_prop = 0.9
@@ -222,7 +204,7 @@ hpc_dummies$set[sample(n, n_test, replace = FALSE)] = "Test"
 
 # 10-fold split
 
-```{r}
+```{r echo=FALSE}
 set.seed(1)
 folds = floor(seq(1,11, length.out=nrow(hpc_dummies)+1))[1:nrow(hpc_dummies)]
 folds = sample(folds, length(folds))
@@ -232,10 +214,10 @@ hpc_dummies$fold = folds
 
 # Normalize quantitative variables
 
-```{r}
-hpc_quant = hpc_dummies |> select(-c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, costs_bin, rural, set, fold))
+```{r echo=FALSE}
+hpc_quant = hpc_dummies |> select(-c(provider_bin_Specialized, control_bin_Governmental, control_bin_Voluntary, costs_bin, rural, set, fold))
 
-hpc_qual = hpc_dummies |> select(c(provider_bin_Specialized, control_bin_Governmental, control_bin_Proprietary, costs_bin, rural, set, fold))
+hpc_qual = hpc_dummies |> select(c(provider_bin_Specialized, control_bin_Governmental, control_bin_Voluntary, costs_bin, rural, set, fold))
 
 hpc_scaled = as_tibble(scale(hpc_quant) |> cbind(hpc_qual))
 
@@ -252,7 +234,7 @@ df_test = hpc_scaled |> filter(set == "Test") |> select(-c(set, fold))
 
 ## Marginal simple linear regressions
 
-```{r}
+```{r echo=FALSE}
 predictors = select(df_train, -c(total_costs, costs_bin))
 
 # model summaries
@@ -263,7 +245,7 @@ simple_models = map(predictors, ~lm(total_costs ~ .x, data = df_train))
 
 10-fold cv
 
-```{r}
+```{r echo=FALSE}
 
 coefficients_df = hpc_scaled |> select(-c(total_costs, costs_bin, set, fold)) |> mutate(across(everything(), as.numeric))
 MSE_df = coefficients_df[1:10,]
@@ -286,7 +268,7 @@ Above is MSE averaged over ten fold cross validation for each marginal linear re
 
 ## Multiple linear regression
 
-```{r}
+```{r echo=FALSE}
 train.X = df_train |> select(-c("costs_bin"))
 test.X = df_test |> select(-c("costs_bin"))
 
@@ -319,7 +301,7 @@ erates
 
 -   Add polynomial terms or transformations of some of the predictors
 
-    ```{r}
+    ```{r echo=FALSE}
     train.X = df_train |> select(-c("costs_bin")) |> 
                           mutate(days2 = total_days^2, salaries2 = salaries^2)
     test.X = df_test |> select(-c("costs_bin")) |> 
@@ -356,7 +338,7 @@ erates
 
 -   Add at least two interaction terms that make sense to you
 
-    ```{r}
+    ```{r echo=FALSE}
     train.X = df_train |> select(-c("costs_bin")) |> 
                           mutate(employees_x_total_income = fte_employees_on_payroll * total_income, specialized_employees_interaction = provider_bin_Specialized * fte_employees_on_payroll)
     test.X = df_test |> select(-c("costs_bin")) |> 
@@ -393,7 +375,7 @@ erates
 
 Both transformations and interaction terms present
 
-```{r}
+```{r echo=FALSE}
 train.X = df_train |> select(-c("costs_bin")) |> 
                       mutate(employees_x_total_income = fte_employees_on_payroll * total_income, specialized_employees_interaction = provider_bin_Specialized * fte_employees_on_payroll, days2 = total_days^2, salaries2 = salaries^2)
 test.X = df_test |> select(-c("costs_bin")) |> 
@@ -430,8 +412,7 @@ erates
 
 ## Regression Tree (with pruning)
 
-```{r}
-{r}
+```{r echo=FALSE}
 library(tree)
 set.seed(1)
 
@@ -471,14 +452,12 @@ for (i in 1:10) {
   erates[i] =  mean( (test.X$total_costs - pred )^2)
 }
 
-erates
-
-mean(erates)
+print(paste("Average MSE rate for 10 fold CV:", mean(erates)))
 ```
 
 ## Bagging (with variable importance)
 
-```{r}
+```{r echo=FALSE}
 library(randomForest)
 set.seed(1)
 
@@ -513,7 +492,7 @@ mean(erates)
 
 ## Random Forest (with variable importance)
 
-```{r}
+```{r echo=FALSE}
 library(randomForest)
 set.seed(1)
 
@@ -548,7 +527,7 @@ mean(erates)
 
 ## Boosting (including selecting the tuning parameter)
 
-```{r}
+```{r echo=FALSE}
 library(gbm)
 set.seed(1)
 
@@ -564,14 +543,47 @@ pred = predict(boost.total_costs, newdata=test.X)
 
 ## Neural Network
 
+```{r echo=FALSE}
+library(keras)
+train = df_train %>%
+  select(-total_costs)
+
+test = df_test %>%
+  select(-total_costs)
+
+
+# Neural Network Model 
+modelnn <- keras_model_sequential()
+modelnn %>%
+  layer_dense(units = 256, activation = "relu") %>% 
+  layer_dropout(rate = 0.4) %>%
+  layer_dense(units = 128, activation = "relu") %>% 
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 2, activation = "softmax")
+
+modelnn %>% 
+  compile(
+    loss = "categorical_crossentropy",
+    optimizer = optimizer_rmsprop(learning_rate = 0.01), 
+    metrics = "categorical_accuracy"
+    )
+```
+
 # Variable Selection
 
 ## Best Subset
 
-```{r}
+```{r, echo=FALSE}
 library(leaps)
 
 erates = matrix(rep(0, 10*12), nrow = 10, ncol = 12)
+
+best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X))
+
+plot(best_subset, scale="r2")
+plot(best_subset, scale="adjr2")
+plot(best_subset, scale="Cp")
+plot(best_subset, scale="bic")
 
 for (i in 1:10) {
   train.X = hpc_scaled |> filter(fold != i) |> select(-c(costs_bin, set, fold))
@@ -594,15 +606,36 @@ for (i in 1:10) {
 
 erates = as_tibble(erates) |> summarize(across(V1:V12,mean))
 
-erates
+plot(1:12, erates[1,], 
+     col = ifelse(1:12 == which.min(erates), "red", "black"),
+     xlab = "Model Size",
+     ylab = "Average Test MSE")
 
-which(erates == min(erates))
+title("Best Subset Selection")
+
+data = hpc_scaled |> select(-c(fold,set,costs_bin))
+
+best_subset = regsubsets(total_costs ~ ., data = data)
+
+coeffs = as.matrix(coef(best_subset, 8))
+colnames(coeffs) = c("Coefficient Estimate")
+
+coeffs
 ```
 
 ## Forward Stepwise
 
-```{r}
+```{r echo=FALSE}
 library(leaps)
+
+X = hpc_scaled
+
+best_subset = regsubsets(total_costs ~ ., data = X, nvmax = ncol(train.X))
+
+plot(best_subset, scale="r2")
+plot(best_subset, scale="adjr2")
+plot(best_subset, scale="Cp")
+plot(best_subset, scale="bic")
 
 erates = matrix(rep(0, 10*12), nrow = 10, ncol = 12)
 
@@ -627,15 +660,37 @@ for (i in 1:10) {
 
 erates = as_tibble(erates) |> summarize(across(V1:V12,mean))
 
-erates
+plot(1:12, erates[1,], 
+     col = ifelse(1:12 == which.min(erates), "red", "black"),
+     xlab = "Model Size",
+     ylab = "Average Test MSE")
 
-which(erates == min(erates))
+title("Forward Stepwise Selection")
+
+data = hpc_scaled |> select(-c(fold,set,costs_bin))
+
+best_subset = regsubsets(total_costs ~ ., data = data)
+
+coeffs = as.matrix(coef(best_subset, 8))
+colnames(coeffs) = c("Coefficient Estimate")
+
+coeffs
 ```
 
 ## Backward Stepwise
 
-```{r}
+```{r, echo=FALSE}
 library(leaps)
+
+train.X = hpc_scaled |> filter(set == "Train") |> select(-c(costs_bin, set, fold))
+test.X = hpc_scaled |> filter(set == "Test") |> select(-c(costs_bin, set, fold))
+
+best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X))
+
+plot(best_subset, scale="r2")
+plot(best_subset, scale="adjr2")
+plot(best_subset, scale="Cp")
+plot(best_subset, scale="bic")
 
 erates = matrix(rep(0, 10*12), nrow = 10, ncol = 12)
 
@@ -660,35 +715,57 @@ for (i in 1:10) {
 
 erates = as_tibble(erates) |> summarize(across(V1:V12,mean))
 
-erates
+plot(1:12, erates[1,], 
+     col = ifelse(1:12 == which.min(erates), "red", "black"),
+     xlab = "Model Size",
+     ylab = "Average Test MSE")
 
-which(erates == min(erates))
+title("Backward Stepwise Selection")
+
+data = hpc_scaled |> select(-c(fold,set,costs_bin))
+
+best_subset = regsubsets(total_costs ~ ., data = data)
+
+coeffs = as.matrix(coef(best_subset, 8))
+colnames(coeffs) = c("Coefficient Estimate")
+
+coeffs
 ```
 
-(For the above 3 methods, determine which model of a given size is best by comparing the 10-fold cross validation estimate of the test error.)
+With best subset, forward stepwise, and backward stepwise selection, all choose a model size of 8 as the model with the lowest average test MSE across 10 fold cross validation.
 
 ## Ridge regression (find the best tuning parameter using cross-validation)
 
 ### Quantitative
 
-```{r}
+```{r echo=FALSE}
 library(glmnet)
+
+set.seed(1)
+
 train.X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
 x = scale(model.matrix(total_costs ~ ., data = train.X)[ , -1])
 
 lambda_grid = 10 ^ seq(10, -2, length = 100)
-ridge_reg = cv.glmnet(x, hpc_dummies$total_costs, alpha = 0, type.measure = "mse", lambda = lambda_grid, nfolds=10)
+ridge_reg = cv.glmnet(x, hpc_scaled$total_costs, alpha = 0, type.measure = "mse", lambda = lambda_grid, nfolds=10)
 lambda = ridge_reg$lambda.min
 
-ridge_model = glmnet(x, hpc_dummies$total_costs,alpha = 0, lambda = lambda, nfolds=10)
+ridge_model = glmnet(x, hpc_scaled$total_costs,alpha = 0, lambda = lambda, nfolds=10)
 
-coef(ridge_model)
+coeffs = coef(ridge_model)
+
+colnames(coeffs) = c("Coefficient Estimate")
+
+coeffs
 ```
 
 ### Qualitative
 
-```{r}
+```{r echo=FALSE}
 library(glmnet)
+
+set.seed(1)
+
 train.X = hpc_scaled |> select(-c("total_costs", "set", "fold"))
 x = scale(model.matrix(costs_bin ~ ., data = train.X)[ , -1])
 
@@ -698,15 +775,24 @@ lambda = ridge_reg$lambda.min
 
 ridge_model = glmnet(x, hpc_scaled$costs_bin,alpha = 0, lambda = lambda, nfolds=10)
 
-coef(ridge_model)
+coeffs = coef(ridge_model)
+
+colnames(coeffs) = c("Coefficient Estimate")
+
+coeffs
 ```
 
 ## Lasso (find the best tuning parameter using cross-validation)
 
 ### Quantitative
 
-```{r}
+Below we have the Lasso selection results for predicting total costs:
+
+```{r echo=FALSE}
 library(glmnet)
+
+set.seed(1)
+
 train.X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
 x = scale(model.matrix(total_costs ~ ., data = train.X)[ , -1])
 
@@ -717,13 +803,20 @@ lambda = lasso_reg$lambda.min
 
 lasso_model = glmnet(x, hpc_scaled$total_costs, alpha = 1, lambda = lambda, nfolds=10)
 
-coef(lasso_model)
+coeffs = coef(lasso_model)
+
+colnames(coeffs) = c("Coefficient Estimate")
+
+coeffs
 ```
 
 ### Qualitative
 
-```{r}
+```{r echo=FALSE}
 library(glmnet)
+
+set.seed(1)
+
 train.X = hpc_scaled |> select(-c("total_costs", "set", "fold"))
 x = scale(model.matrix(costs_bin ~ ., data = train.X)[ , -1])
 
@@ -734,12 +827,16 @@ lambda = lasso_reg$lambda.min
 
 lasso_model = glmnet(x, hpc_scaled$costs_bin, alpha = 1, lambda = lambda, nfolds=10)
 
-coef(lasso_model)
+coeffs = coef(lasso_model)
+
+colnames(coeffs) = c("Coefficient Estimate")
+
+coeffs
 ```
 
 ## Principal Components Regression (PCR)
 
-```{r}
+```{r echo=FALSE}
 library(pls)
 
 train.X = df_train
@@ -749,7 +846,7 @@ pcr_model = pcr(total_costs ~ ., data = train.X)
 
 pred = predict(pcr_model, newdata = test.X)
 
-mean((pred - test.X$total_costs)^2)
+print(paste("Test MSE for train-test split:", mean((pred - test.X$total_costs)^2)))
 
 
 erates = rep(0,10)
@@ -758,23 +855,22 @@ for (i in 1:10) {
   train.X = hpc_scaled |> filter(fold != i) |> select(-c(set,fold,costs_bin))
   test.X = hpc_scaled |> filter(fold == i) |> select(-c(set,fold,costs_bin))
 
-pcr_model = pcr(total_costs ~ ., data = train.X)
+  pcr_model = pcr(total_costs ~ ., data = train.X)
 
-pred = predict(pcr_model, newdata = test.X)
+  pred = predict(pcr_model, newdata = test.X)
 
-erates[i] = mean((pred - test.X$total_costs)^2)
+  erates[i] = mean((pred - test.X$total_costs)^2)
 }
 
-erates
 
-mean(erates)
+print(paste("Average Test MSE across 10-folds:", mean(erates)))
 ```
 
 # Qualitative Outcome Analyses
 
 ## KNN
 
-```{r}
+```{r echo=FALSE}
 library(class)
 set.seed(1)
 
@@ -794,10 +890,14 @@ for (i in 1:K) {
 
 }
 
-print(false_neg)
-print(false_pos)
+erate = false_neg + false_pos
 
-erates = matrix(rep(0, 10*K), nrow = 10, ncol =K)
+print(paste("False positive rate for best K (K = ", which.min(erate), "): ", false_pos[which.min(erate)], sep=""))
+print(paste("False negative rate for best K (K = ", which.min(erate), "): ", false_neg[which.min(erate)], sep=""))
+
+false_neg = matrix(rep(0, 10*K), nrow = 10, ncol =K)
+
+false_pos = matrix(rep(0, 10*K), nrow = 10, ncol =K)
 
 for (i in 1:10) {
   for (j in 1:K) {
@@ -807,15 +907,20 @@ for (i in 1:10) {
     
     knn.pred = knn(train.X, test.X, class, k = j)
     test.X = filter(hpc_scaled, fold == i) |> select(-c(fold, set,total_costs))
-   erates[[i,j]] = mean(knn.pred != test.X$costs_bin)
+    false_neg[[i,j]] = mean((knn.pred == 0) & (df_test$costs_bin == 1))[1]
+    false_pos[[i,j]] = mean((knn.pred == 1) & (df_test$costs_bin == 0))[1]
   }
 }
 
-erates
+summarized_k_false_neg = as_tibble(false_neg) |> summarize(across(everything(), mean))
+summarized_k_false_pos = as_tibble(false_pos) |> summarize(across(everything(), mean))
 
-summarized_k = as_tibble(erates) |> summarize(across(everything(), mean))
+erates = false_neg + false_pos
 
-which.min(summarized_k)
+summarized_k= as_tibble(erates) |> summarize(across(everything(), mean))
+
+print(paste("False positive rate for best K (K = ", which.min(), "): ", false_pos[which.min(erate)], sep=""))
+print(paste("False negative rate for best K (K = ", which.min(erate), "): ", false_neg[which.min(erate)], sep=""))
 ```
 
 ## Multiple logistic regression
@@ -823,7 +928,7 @@ which.min(summarized_k)
 -   Add polynomial terms or transformations of some of the predictors
 -   Add at least two interaction terms that make sense to you
 
-```{r}
+```{r echo=FALSE}
 suppressWarnings({
 
 train.X = df_train |> select(-c("total_costs"))
@@ -864,7 +969,7 @@ erates
 mean(erates)
 ```
 
-```{r}
+```{r echo=FALSE}
 suppressWarnings({
 
 train.X = df_train |> select(-c("total_costs")) |> 
@@ -908,7 +1013,7 @@ erates
 mean(erates)
 ```
 
-```{r}
+```{r echo=FALSE}
 
 suppressWarnings({
 
@@ -957,7 +1062,7 @@ mean(erates)
 
 ## LDA
 
-```{r}
+```{r echo=FALSE}
 # sample code for LDA
 
 lda_costs = MASS::lda(costs_bin ~ ., data = df_train)
@@ -988,7 +1093,7 @@ mean(erates)
 
 ## QDA
 
-```{r}
+```{r echo=FALSE}
 
 qda_costs = MASS::qda(costs_bin ~ ., data = df_train)
 
@@ -1018,7 +1123,7 @@ mean(erates)
 
 ## Naive Bayes (at least two kernels)
 
-```{r}
+```{r echo=FALSE}
 library(e1071)
 library(naivebayes)
 
@@ -1032,7 +1137,7 @@ test_error_nb = mean(df_test$costs_bin != nb_pred)
 test_error_nb
 ```
 
-```{r}
+```{r echo=FALSE}
 erates = rep(0, 10)
 
 for (i in 1:10) {
@@ -1049,7 +1154,7 @@ for (i in 1:10) {
 erates
 ```
 
-```{r}
+```{r echo=FALSE}
 predictors = select(df_train, -c(total_costs, costs_bin))
 
 predictor_matrix = as.matrix(predictors)
@@ -1069,7 +1174,7 @@ test_error_nb_kde_pred = mean(df_test$costs_bin != nb_kde_pred)
 test_error_nb_kde_pred
 ```
 
-```{r}
+```{r echo=FALSE}
 
 erates = rep(0, 10)
 
@@ -1101,7 +1206,7 @@ mean(erates)
 
 ## Decision Tree (with pruning)
 
-```{r}
+```{r echo=FALSE}
 library(tree)
 set.seed(1)
 
@@ -1150,7 +1255,7 @@ mean(erates)
 
 ## Bagging (with variable importance)
 
-```{r}
+```{r echo=FALSE}
 library(randomForest)
 set.seed(1)
 
@@ -1185,7 +1290,7 @@ mean(erates)
 
 ## Random Forest (with variable importance)
 
-```{r}
+```{r echo=FALSE}
 library(randomForest)
 set.seed(1)
 
@@ -1222,7 +1327,7 @@ mean(erates)
 
 (For the above three methods, calculate the Gini index on each leaf of the final tree to examine the purity of the node.)
 
-```{r}
+```{r echo=FALSE}
 library(gbm)
 set.seed(1)
 
@@ -1236,13 +1341,76 @@ pred = round(predict(boost.costs_bin, newdata=test.X, type="response"))
 
 ## Neural Network
 
-## Calculate True/False Positive/Negative rates for each method
+```{r echo=TRUE}
+library(keras)
 
-# Bootstrap CI
+modelnn <- keras_model_sequential()
+modelnn %>%
+  layer_dense(units = 256, activation = "relu",
+              input_shape = 784) %>%
+  layer_dropout(rate = 0.4) %>%
+  layer_dense(units = 128, activation = "relu") %>%
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 10, activation = "softmax")
+```
+
+# Bootstrap SEs
+
+Our bootstrap study looks at the standard errors of the coefficient estimates found through ridge regression, with 1000 bootstrap samples. Our data is scaled, which is why our standard errors are all approximately the same magnitude.
+
+```{r echo=FALSE}
+library(boot)
+library(glmnet)
+
+X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
+
+B = 1000
+
+coeffs = matrix(rep(0,B*13), nrow=B)
+
+for (i in 1:B) {
+  x = X[sample(nrow(x), nrow(x), replace = TRUE),]
+  
+  x = scale(model.matrix(total_costs ~ ., data = x)[ , -1])
+  
+  lambda_grid = 10 ^ seq(10, -2, length = 100)
+  
+  ridge_reg = cv.glmnet(x, hpc_scaled$total_costs,
+                        alpha = 0, 
+                        type.measure = "mse", 
+                        lambda = lambda_grid, 
+                        nfolds=10)
+  
+  lambda = ridge_reg$lambda.min
+  
+  ridge_model = glmnet(x, hpc_scaled$total_costs,
+                       alpha = 0,
+                       lambda = lambda,
+                       nfolds=10)
+  
+  for (j in 1:13)
+ coeffs[i,j] = coef(ridge_model)[j]
+}
+
+coeffs_mean = coeffs |> as_tibble() |> summarize(across(V1:V13,mean))
+
+se = rep(0,13)
+
+for (i in 1:13) {
+  se[i] = sqrt((1/(B-1))*sum((coeffs[,1]) -coeffs_mean[i])^2)
+}
+
+se = as.matrix(se, ncol=1)
+
+row.names(se) = dimnames(coef(ridge_model))[[1]]
+colnames(se) = c("Bootstrap Standard Error Estimate")
+
+se
+```
 
 # Simulation Study
 
-```{r}
+```{r echo=FALSE}
 set.seed(1)
 library(tidyverse)
 library(faux)
