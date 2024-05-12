@@ -212,7 +212,7 @@ rates %>%
 We still assume that our predictors are drawn from a multivariate normal distribution but drop the assumption that both classes share a common covariance matrix. 
 
 ### Results 
-QDA did not perform much better than LDA with a cross validation error of $0.115$ and a true error rate of $0.119$. However, compared to LDA, QDA did a much better job of accurately classifying hospitals whose total costs were below the median reducing the false positive rate from $8.7\%$ to $1.4\%$. The false negative rates stayed fairly consistent hovering around $\sim 20\%$. Overall, QDA is adequate at predicting our class labels. 
+QDA did not perform much better than LDA with a cross validation error of $0.115$ and a true error rate of $0.119$. However, compared to LDA, QDA did a much better job of accurately classifying hospitals whose total costs were below the median reducing the false positive rate from $8.7\%$ to $1.4\%$. The false negative rates stayed fairly consistent hovering around $\sim 20\%$ in both methods. Overall, QDA is adequate at predicting our class labels. 
 
 ```{r,warning=FALSE,message=FALSE,echo=FALSE}
 type = c("True positive", "True negative", "False positive", 
@@ -227,6 +227,79 @@ rates %>%
   kable_styling()
 ```
 
+## Naive Bayes with Gaussian kernel 
+
+### Assumptions 
+We assume that our predictors are not correlated with one another and are drawn from a multivariate normal distribution given the target class. 
+
+### Results 
+With a Gaussian kernel, the naive Bayes classifier was comparable to QDA. This classifier produced a cross validation error rate of $0.127$ and a true error rate of $0.137$. The misclassification rates were also extremely similar and can be summarized in the table below. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.752,0.982,0.0181,0.248)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Naive Bayes with Kernel Density Estimation
+
+### Assumptions 
+We still assume that our predictors are not correlated with one another but drop the normal distribution assumption. 
+
+### Results 
+Without assuming normality, the Bayes Classifier performs much better with a cross validation error rate of $0.073$ and a true error rate of $0.0806$. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.867,0.975,0.0253,0.133)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Decision Tree with Pruning 
+
+### Assumptions 
+We make no assumptions on the structure of the data. 
+
+### Results 
+We pruned the tree using $5$ terminal nodes which was found to be the optimal number of nodes using cross validation. The cross validation error rate was $0.051$ compared to the true error rate of $0.0595$. We also noticed that the split at the root node immediately determines how each hospital will be classified. If `salaries < -0.305`, then the hospital will be classified as having total costs below the median; otherwise, the hospital will be classified as above the median.  
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+plot(imager::load.image("~/hospital-costs/lindsayknupp/dec_tree.png"), axes = FALSE)
+
+```
+
+The false positive rate was extremely low at $1.4\%$ while the false negative rate was slightly higer at $10\%$.
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.898,0.986,0.0144,0.102)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Bagging 
+
+### Assumptions 
+
+### Results 
 
 
 # Simulation Study 

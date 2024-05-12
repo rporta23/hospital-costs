@@ -1588,14 +1588,14 @@ qda_model <- MASS::qda(costs_bin ~ ., data = select(train,-fold))
 qda_pred <- predict(qda_model, newdata = select(test, -c(costs_bin)))$class
 
 model_info = tibble(.rows=1)
-contingency = table(pred,test$costs_bin)
+contingency = table(qda_pred,test$costs_bin)
 
 model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
 model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
 model_info$falsepos = 1 - model_info$trueneg
 model_info$falseneg = 1 - model_info$truepos
 
-model_info$error_rate <- mean( (test$costs_bin != lda_pred) )
+model_info$error_rate <- mean( (test$costs_bin != qda_pred) )
 
 testMSE_qda = model_info$error_rate
 truepos_qda = model_info$truepos
@@ -1659,14 +1659,14 @@ nb_model <- e1071::naiveBayes(costs_bin ~ ., data = select(train,-fold))
 nb_pred <- predict(nb_model, newdata = select(test, -c(costs_bin)))
 
 model_info = tibble(.rows=1)
-contingency = table(pred,test$costs_bin)
+contingency = table(nb_pred,test$costs_bin)
 
 model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
 model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
 model_info$falsepos = 1 - model_info$trueneg
 model_info$falseneg = 1 - model_info$truepos
 
-model_info$error_rate <- mean( (test$costs_bin != lda_pred) )
+model_info$error_rate <- mean( (test$costs_bin != nb_pred) )
 
 testMSE_nb = model_info$error_rate
 truepos_nb = model_info$truepos
@@ -1800,6 +1800,7 @@ text(tree.costs)
 tree.pred = predict(tree.costs,test,type="class")
 testerror = mean(  (test$costs_bin != tree.pred)  )
 
+
 # Optimal number of nodes
 cv.costs = cv.tree(tree.costs)
 plot(cv.costs$size, cv.costs$dev, type = "b")
@@ -1823,7 +1824,7 @@ prune.costs.full = prune.tree(tree.costs.full,best=optimalnodesfull)
 prune.pred.full = predict(prune.costs.full,test,type="class")
 testerrorprunefull = mean(  (test$costs_bin != prune.pred.full) )
 ```
-Best number of terminal nodes is 6.
+Best number of terminal nodes is 5.
 
 k fold CV 
 ```{r}
@@ -1832,7 +1833,7 @@ compute_MSEP_regression_tree <- function(train_data,i){
     current_test_fold <- filter(train_data, fold == i)
     
     tree.costs = tree(costs_bin ~ ., data = select(current_train_folds,-fold))
-    prune.costs = prune.tree(tree.costs,best = 6)
+    prune.costs = prune.tree(tree.costs,best = 5)
     
     prune.pred = predict(prune.costs,select(current_test_fold,-fold),type="class")
     
@@ -1845,7 +1846,7 @@ cv_decision_tree = mean(map_dbl(1:10,~compute_MSEP_regression_tree(train,.x)))
 Test error 
 ```{r}
 tree.costs = tree(costs_bin ~ ., data = select(train,-fold))
-prune.costs = prune.tree(tree.costs,best = 6)
+prune.costs = prune.tree(tree.costs,best = 5)
 
 prune.pred = predict(prune.costs,test,type="class")
 
