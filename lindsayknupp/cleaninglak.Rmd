@@ -1364,8 +1364,6 @@ write_csv(summary_df,file = "simpleglm_coef.csv")
 
 pred <- round(predict(mod, newdata = select( test, -c(costs_bin) ),type = "response" ))
 
-
-  
 model_info = tibble(.rows=1)
 contingency = table(pred,test$costs_bin)
 
@@ -1383,8 +1381,76 @@ falsepos_glm = model_info$falsepos
 falseneg_glm = model_info$falseneg
 ```
 
+
+
 -   Add polynomial terms or transformations of some of the predictors
 -   Add at least two interaction terms that make sense to you
+
+Transformation model 
+```{r}
+set.seed(1)
+
+train = df_train %>%
+  select(-c(total_costs)) %>%
+  mutate(income_emp = total_income * fte_employees_on_payroll,
+         sal_emp = salaries * fte_employees_on_payroll,
+         total_days_sq = total_days^2,
+         ) %>%
+  select(total_income,fte_employees_on_payroll,salaries,total_days,
+         total_days_sq, income_emp,sal_emp,costs_bin,fold)
+  
+test = df_test %>%
+  select(-c(total_costs)) %>%
+  mutate(income_emp = total_income * fte_employees_on_payroll,
+         sal_emp = salaries * fte_employees_on_payroll,
+         total_days_sq = total_days^2,
+         ) %>%
+  select(total_income,fte_employees_on_payroll,salaries,total_days,
+         total_days_sq, income_emp,sal_emp,costs_bin)
+
+transformation_mod = glm("costs_bin ~ .", data = select(train,-fold),family = binomial)
+
+a = summary(transformation_mod)[["coefficients"]]
+Estimate = a[,1]
+Std_error = a[,2]
+z_value = a[,3]
+Pr = a[,4]
+Coefficients = row.names(a)
+
+summary_df = tibble("Coefficients" = Coefficients,"Estimate" = Estimate,
+"Std. Error" = Std_error, "z value" = z_value, "Pr(>|Z|)" = Pr)
+
+write_csv(summary_df,file = "transglm_coef.csv")
+
+pred <- round(predict(transformation_mod, newdata = select( test, -c(costs_bin) ),type = "response" ))
+
+model_info = tibble(.rows=1)
+contingency = table(pred,test$costs_bin)
+
+model_info$truepos = contingency[2,2] / (contingency[1,2] + contingency[2,2])
+model_info$trueneg = contingency[1,1] / (contingency[2,1] + contingency[1,1])
+model_info$falsepos = 1 - model_info$trueneg
+model_info$falseneg = 1 - model_info$truepos
+
+model_info$error_rate <- mean( (test$costs_bin != pred) )
+
+testMSE_glm = model_info$error_rate
+truepos_glm = model_info$truepos
+trueneg_glm = model_info$trueneg
+falsepos_glm = model_info$falsepos
+falseneg_glm = model_info$falseneg
+
+```
+
+Johnny's model
+```{r}
+
+logit_model = glm("costs_bin ~ fte_employees_on_payroll * total_income + provider_bin_Specialized*fte_employees_on_payroll",data = select(train,-fold),family = binomial)
+
+summary(logit_model)
+```
+
+
 
 ## LDA
 

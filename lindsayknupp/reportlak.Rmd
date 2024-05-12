@@ -155,7 +155,36 @@ rates %>%
 We again assume that our predictors are not correlated with one another.
 
 ### Results 
-For our transformation, we decided to look at 
+We decided to transform `total_income`,`fte_employees_on_payroll`, `salaries`, and `total_days` to experiment with how less significant predictors in conjunction with `salaries` affected the response. We computed polynomial models up to degree $2$ for `total_days` and interaction terms between `total_income` & `fte_employees_on_payroll` and between `fte_employees_on_payroll` & `salaries`.
+
+With our smaller model, all of our new predictors were statistically significant with extreme $z$ statistics. However, it is important to note that the standard errors associated with each coefficient were extremely high suggesting a poor fit. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+simpleglm_coef = read_csv("~/hospital-costs/lindsayknupp/transglm_coef.csv")
+
+simpleglm_coef = cbind(simpleglm_coef[,1],round(simpleglm_coef[,2:5],2))
+colnames(simpleglm_coef)[5] = "p-value"
+
+kable(simpleglm_coef) %>%
+  kable_styling(latex_options = "striped")
+```
+
+Compared to our original multiple logistic regression, our true error rate shot up from $0.033$ to $0.158$ and our cross validation error rate shot up from $0.073$ to $0.130$. Interestingly enough though, the model perfectly predicted hospitals whose total costs were below the median with a true negative rate of $100\%$. But, it did misclassify hospitals whose total costs were above the median with a false negative rate of $30.6\%$. Overall, the transformations performed worse than our original multiple logistic model. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.694,1,0,0.306)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+
 
 # Simulation Study 
 
