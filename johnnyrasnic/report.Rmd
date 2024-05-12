@@ -122,7 +122,7 @@ library(leaps)
 
 X = hpc_scaled |> select(-c(fold,set, costs_bin))
 
-erates = matrix(rep(0, 10*12), nrow = 10, ncol = 12)
+erates = matrix(rep(0, 10*13), nrow = 10, ncol = 13)
 
 best_subset = regsubsets(total_costs ~ ., data = X, nvmax = ncol(X))
 
@@ -131,6 +131,7 @@ plot(best_subset, scale="adjr2")
 plot(best_subset, scale="Cp")
 plot(best_subset, scale="bic")
 
+i=1
 for (i in 1:10) {
   train.X = hpc_scaled |> filter(fold != i) |> select(-c(costs_bin, set, fold))
   test.X = hpc_scaled |> filter(fold == i) |> select(-c(costs_bin, set, fold))
@@ -150,10 +151,10 @@ for (i in 1:10) {
   }
 }
 
-erates = as_tibble(erates) |> summarize(across(V1:V12,mean))
+erates = as_tibble(erates) |> summarize(across(V1:V13,mean))
 
-plot(1:12, erates[1,], 
-     col = ifelse(1:12 == which.min(erates), "red", "black"),
+plot(1:13, erates[1,], 
+     col = ifelse(1:13 == which.min(erates), "red", "black"),
      xlab = "Model Size",
      ylab = "Average Test MSE")
 
@@ -185,7 +186,7 @@ plot(best_subset, scale="adjr2")
 plot(best_subset, scale="Cp")
 plot(best_subset, scale="bic")
 
-erates = matrix(rep(0, 10*12), nrow = 10, ncol = 12)
+erates = matrix(rep(0, 10*13), nrow = 10, ncol = 13)
 
 for (i in 1:10) {
   train.X = hpc_scaled |> filter(fold != i) |> select(-c(costs_bin, set, fold))
@@ -206,10 +207,10 @@ for (i in 1:10) {
   }
 }
 
-erates = as_tibble(erates) |> summarize(across(V1:V12,mean))
+erates = as_tibble(erates) |> summarize(across(V1:V13,mean))
 
-plot(1:12, erates[1,], 
-     col = ifelse(1:12 == which.min(erates), "red", "black"),
+plot(1:13, erates[1,], 
+     col = ifelse(1:13 == which.min(erates), "red", "black"),
      xlab = "Model Size",
      ylab = "Average Test MSE")
 
@@ -240,7 +241,7 @@ plot(best_subset, scale="adjr2")
 plot(best_subset, scale="Cp")
 plot(best_subset, scale="bic")
 
-erates = matrix(rep(0, 10*12), nrow = 10, ncol = 12)
+erates = matrix(rep(0, 10*13), nrow = 10, ncol = 13)
 
 for (i in 1:10) {
   train.X = hpc_scaled |> filter(fold != i) |> select(-c(costs_bin, set, fold))
@@ -261,9 +262,9 @@ for (i in 1:10) {
   }
 }
 
-erates = as_tibble(erates) |> summarize(across(V1:V12,mean))
+erates = as_tibble(erates) |> summarize(across(V1:V13,mean))
 
-plot(1:12, erates[1,], 
+plot(1:13, erates[1,], 
      col = ifelse(1:12 == which.min(erates), "red", "black"),
      xlab = "Model Size",
      ylab = "Average Test MSE")
