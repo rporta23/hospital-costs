@@ -605,7 +605,7 @@ compute_error_rf <- function(train_data, formula, i) {
       importance = TRUE # not necessary, compute importance of variables.
     )
 
-  rf_pred <- predict(bag_train, current_test_fold, predict.all = TRUE)
+  rf_pred <- predict(rf_train, current_test_fold, predict.all = TRUE)
 
   rf_pred_avg <- map_dbl(
     1:nrow(current_test_fold),
@@ -623,8 +623,8 @@ kfold_cv_rf <- function(train_data, formula, k = 10) {
   return(avg_error)
 }
 
-#cv_error_rf <- kfold_cv_rf(train_data, formula)
-cv_error_rf <- 0.01186113
+# cv_error_rf <- kfold_cv_rf(train_data, formula)
+cv_error_rf <- 0.07117585
 ```
 
 ```{r}
@@ -633,7 +633,7 @@ rf_train <-
   randomForest(
     formula,
     data = select(train_data, -fold),
-    ntree = n_trees, # m = p for bagging.
+    ntree = n_trees,
     keep.forest = TRUE, # not necessary, using to compute test errors for all trees.
     importance = TRUE # not necessary, compute importance of variables.
   )
@@ -664,7 +664,7 @@ knitr::kable(table)
 
 We see that the ordering of variable importance is similar to that for bagging, with salaries and number of employees being the top two most important. 
 
-The estimate of the test MSEP using CV is 0.012, and the test MSEP based on the held-out set is 0.053. These error values are notably lower than those for the previous methods.
+The estimate of the test MSEP using CV is 0.071, and the test MSEP based on the held-out set is 0.053. These error values are a little lower than those for the previous methods.
 
 ## Boosting 
 
@@ -766,6 +766,8 @@ The estimate of the test MSEP using CV is 0.092, and the test MSEP based on the 
 The only assumption for the neural network is that the response is continuous. There are no parametric assumptions.
 
 ### Results
+
+We created a neural network with four hidden layers and one output layer. Out of the five total layers,  three are dense layers and two are dropout layers. For the two hidden dense layers, we used relu activation functions. For the two hidden dropout layers, we used dropout rate 0.4 and 0.3 respectively. The output layer uses a linear activation function because our response is continuous. We structured the network as alternating dense layers and dropout layers to help prevent over-fitting. 
 
 The estimate of the test MSEP using CV is 0.072, and the test MSEP based on the held-out set is 0.088. These error values are on the lower side compared to the previous methods, but not as low as for random forest.
 
