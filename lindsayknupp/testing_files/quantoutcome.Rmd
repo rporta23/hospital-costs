@@ -1,0 +1,478 @@
+---
+title: "quantoutcome"
+author: "Lindsay Knupp"
+date: "2024-05-13"
+output: pdf_document
+---
+
+```{r, include=FALSE}
+# Rose's section 
+rm(list=ls())
+knitr::opts_chunk$set(echo = FALSE, include = FALSE, warning = FALSE,
+                      message = FALSE)
+library(tidyverse)
+library(caret)
+library(class)
+library(glmnet)
+library(naivebayes)
+library(leaps)
+library(pls)
+library(tree)
+library(randomForest)
+library(gbm)
+library(keras)
+library(faux)
+library(jtools)
+```
+
+
+```{r}
+hpc <- read_csv(here::here("hpc.csv"))
+# summary(hpc)
+
+hpcdf <- hpc |>
+  mutate(
+    start = as.Date(`Fiscal Year Begin Date`), end = as.Date(`Fiscal Year End Date`)
+  ) |>
+  mutate(days = as.numeric(end - start)) |>
+  mutate(numBeds = `Total Bed Days Available` / days, id = row_number())
+```
+
+```{r}
+hpc_clean <- hpcdf |>
+  janitor::clean_names() |>
+  select(provider_ccn, days, number_of_beds,
+    total_costs, rural_versus_urban, provider_type, type_of_control,
+    fte_employees_on_payroll,
+    total_days = total_days_v_xviii_xix_unknown,
+    total_discharges = total_discharges_v_xviii_xix_unknown,
+    total_income, total_assets,
+    salaries = total_salaries_from_worksheet_a
+  ) |>
+  na.omit() |>
+  mutate(
+    rural = ifelse(rural_versus_urban == "R", 1, 0),
+    control_bin = case_when(
+      type_of_control < 3 ~ "Voluntary",
+      (type_of_control >= 3 & type_of_control < 7) ~ "Proprietary",
+      type_of_control >= 7 ~ "Governmental"
+    ),
+    provider_bin = ifelse(provider_type < 3 |
+      provider_type == 6,
+    "General", "Specialized"
+    ),
+  ) |>
+  select(-c(rural_versus_urban, type_of_control, provider_type))
+
+duplicates <- hpc_clean |>
+  group_by(provider_ccn) |>
+  summarise(count = n()) |>
+  filter(count > 1)
+
+dup <- map_lgl(hpc_clean$provider_ccn, `%in%`, duplicates$provider_ccn)
+
+hpc_clean$duplicate <- as.numeric(dup)
+
+hpc_normalize <- hpc_clean |>
+  mutate(
+    total_costs = total_costs / days,
+    inpatients = total_days / days,
+    total_discharges = total_discharges / days,
+    total_income = total_income / days,
+    salaries = salaries / days
+  )
+```
+
+```{r}
+hpc_dummies <- hpc_normalize |>
+  select(-c(provider_ccn, days)) |>
+  mutate(
+    costs_bin = ifelse(total_costs > median(total_costs), 1, 0)
+  ) |>
+  tidytable::get_dummies() |>
+  select(-c(control_bin_Voluntary, provider_bin_General)) |> 
+  select(where(is.numeric))
+```
+
+```{r}
+quant_scaled <- hpc_dummies |>
+  select(-c(
+    control_bin_Governmental, control_bin_Proprietary,
+    provider_bin_Specialized, rural, costs_bin, duplicate
+  )) |>
+  scale()
+
+qual <- hpc_dummies |>
+  select(c(
+    control_bin_Governmental, control_bin_Proprietary,
+    provider_bin_Specialized, rural, costs_bin, duplicate
+  ))
+
+hpc_scaled <- cbind(quant_scaled, qual)
+```
+
+
+```{r}
+set.seed(1)
+
+train_prop <- 0.9
+
+n <- nrow(hpc_scaled)
+n_train <- train_prop * n
+n_test <- n - n_train
+
+hpc_scaled$set <- "Train"
+hpc_scaled$set[sample(n, n_test, replace = FALSE)] <- "Test"
+
+df_train <- hpc_scaled |>
+  filter(set == "Train") |>
+  select(-set)
+
+df_test <- hpc_scaled |>
+  filter(set == "Test") |>
+  select(-set)
+```
+
+
+# Exploratory Data Analysis
+
+In order to get a visual sense of the relationships in the data, we created a few exploratory plots.
+
+The plot below displays the distribution of (scaled) total costs, where the red line represents the median and the blue line represents the mean. We can see that the distribution of total costs is very right-skewed. For this reason, we chose to define our binary response based on whether or not total costs was above the median, not the mean.
+
+```{r, include = TRUE}
+ggplot(hpc_scaled, aes(x = total_costs)) +
+  geom_histogram() +
+  geom_vline(xintercept = median(hpc_scaled$total_costs), color = "red") + 
+  geom_vline(xintercept = mean(hpc_scaled$total_costs), color = "blue")
+```
+
+The pairs plots below visualize the relationships between all variables in the data (using the scaled data). We separated the data into two pairs plots, one including only numeric predictors and one including only categorical predictors, in order to see the relationships more clearly.
+  
+
+```{r, include = TRUE}
+quant_plot <- hpc_scaled |> 
+  select(-c(
+    control_bin_Governmental, control_bin_Proprietary,
+    provider_bin_Specialized, rural, duplicate,
+    set
+  ))
+
+pairs(quant_plot)
+```
+
+In the plot above visualizing the relationships between all numeric predictors and the response, we find that total costs appears to have fairly strong positive linear relationships with the following predictors: employees on payroll, total days, bed days, total discharges, and salaries. Total costs appears to have weak or no relationship with total income and total assets. For the binary response, the predictors which have positive relationships with total cost have a pattern such that binary costs = 0 corresponds to a higher concentration of points with low values of the predictor, and binary costs = 1 corresponds to a wider range of values for the predictor. This same pattern shows up also for total assets and total income, which did not look associated with continuous total cost.
+
+Further, we find very high pairwise positive collinearity between (1) total days, bed days, and total discharges, and (2) salaries and employees on payroll.
+
+Interestingly, despite total costs being so skewed, the relationships between each predictor and the response look very linear, and none of them appear non-linear.
+
+```{r, include = TRUE}
+qual_plot <- hpc_scaled |> 
+  select(
+    control_bin_Governmental, control_bin_Proprietary,
+    provider_bin_Specialized, rural, costs_bin, duplicate, total_costs
+    )
+
+pairs(qual_plot)
+```
+
+Looking at the categorical predictors above, it is less obvious to see relationships between the predictors and response, but there does appear to be some relationship between duplicate and total costs as well as between proprietary control and total costs. For each of these relationships, it seems that when the predictor value equals zero, the total costs are low, while when the predictor value equals one, there is more. of a range of total costs values. However, it is hard to tell if this is a true relationship or if it simply results from unequal numbers of observations in each predictor category. Most total costs values are small, so if there are a smaller number of data points in one category, it would be likely that most of those have small total costs values, while if there are more points in a category, it would look like a wider range.
+
+Focusing on the plot of total costs against binary cost (the two response variables), we notice that all total costs values below the median are very small, while those above the median have a much wider range of values. This reflects the skewness of total costs visualized above. 
+
+# Quantitative Outcome Analyses
+
+
+```{r}
+predictors <- select(df_train, -c(total_costs, costs_bin))
+```
+
+
+
+```{r}
+n_train <- nrow(df_train)
+
+k <- 10
+k.o <- k
+kvals <- unique(round(n_train / (1L:floor(n_train / 2))))
+temp <- abs(kvals - k)
+if (!any(temp == 0)) {
+  k <- kvals[temp == min(temp)][1L]
+}
+f <- ceiling(n_train / k)
+
+df_train$fold <- sample(rep(1L:k, f), n_train)
+```
+
+
+
+```{r}
+train_data <- df_train |> select(-c(costs_bin))
+
+test_data <- df_test |> select(-c(costs_bin))
+```
+
+
+## Marginal simple linear regressions
+
+
+### Assumptions
+
+Linear Regression analysis has four key assumptions:
+
+1. Linear Relationship between predictor and response
+
+2. Independence of Errors
+
+3. Constant Variance
+
+4. Errors are normally distributed
+
+In order to assess these assumptions, we created pairwise scatterplots between the response (total costs) and each predictor. We see from the scatterplots that the relationship between the response and each numeric predictor appears approximately linear, and there are no obvious violations of non-constant variance. A histogram of total costs shows that the response variable is notably right-skewed, indicating possible concern that the errors may be non-normal. However, the linear relationships between each predictor and the response indicate that linear regression is a suitable model. We tried log-transforming total costs to better meet the normality of errors assumption, but we found that this transformation made the relationships between each predictor and the response notably non-linear, indicating that this transformation is not useful to improve the fit of the data to the model assumptions. 
+
+For independence of errors, it is relatively reasonable to assume that the total costs of one hospital would not impact those of another hospital, so this assumption is reasonably met. There could be small violations if, for example, two hospitals are in close proximity and one has more capacity than the other. In this scenario the one with lower capacity may redirect patients to the higer capacity one, making the costs decrease for the smaller one and increase for the larger one. 
+
+```{r}
+# model summaries
+summaries <- map(predictors, ~ summary(lm(total_costs ~ .x, data = df_train)))
+
+simple_models <- map(predictors, ~ lm(total_costs ~ .x, data = df_train))
+```
+
+
+
+```{r}
+# Estimate with k-fold:
+
+predictor_names <- colnames(predictors)
+
+formulas <- str_c("total_costs", " ~ ", predictor_names)
+
+
+compute_MSEP_lm <- function(train_data, formula, i) {
+  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
+  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
+
+  mod <- lm(formula, data = current_train_folds)
+  pred <- predict(mod, newdata = select(current_test_fold, -c(total_costs)))
+
+  MSEP <- mean((current_test_fold$total_costs - pred)^2)
+  return(MSEP)
+}
+
+
+kfold_cv_lm <- function(train_data, formula, k = 10) {
+  MSEP_vec <- map_dbl(1:k, ~ compute_MSEP_lm(train_data, formula, .x))
+  avg_MSEP <- mean(MSEP_vec)
+  return(avg_MSEP)
+}
+
+test_error_vec <- map_dbl(formulas, ~ kfold_cv_lm(df_train, formula = .x, k = 10))
+
+test_error_vec
+```
+
+
+
+```{r}
+compute_MSEP_test <- function(formula, train_data, test_data) {
+  train_data <- train_data |> select(-fold)
+
+  mod <- lm(formula, data = train_data)
+  pred <- predict(mod, newdata = select(test_data, -c(total_costs)))
+
+  MSEP <- mean((test_data$total_costs - pred)^2)
+  return(MSEP)
+}
+
+test_MSEP_vec <- map_dbl(formulas, ~ compute_MSEP_test(.x, df_train, df_test))
+test_MSEP_vec
+```
+
+```{r}
+method <- str_c("Marginal LR", " ", predictor_names)
+```
+
+```{r}
+coef_ests <- map_dbl(simple_models, ~coef(.x)[[2]])
+
+p_values <- map_dbl(summaries, ~`$`(.x, coefficients)[2,4])
+```
+
+
+### Results
+
+The results of the simple linear regression models are summarized in the table below. The first column of the table represents the estimated Mean Squared Error of Prediction (MSEP) by cross validation. The second column represents the MSEP for the held-out test set. The third column represents the coefficient estimate for the predictor. The fourth column represents the p-value associated with the t-test for whether or not each coefficient estimate is equal to zero. 
+
+
+```{r, include = TRUE}
+summary_table_simple <- tibble(
+  method = method,
+  cv_error = test_error_vec,
+  test_error = test_MSEP_vec,
+  coef_est = coef_ests,
+  p_value = p_values
+) |> 
+  mutate_if(is.numeric, ~ round(.x, 3))
+
+knitr::kable(summary_table_simple)
+```
+
+We notice that almost all of the p-values equal zero, indicating strong evidence that each predictor is truly associated with the response, total costs. The indicator variable for Government control (`control_bin_Governmental`) has a large p-value, but the indicator variable for Proprietary control (`control_bin_Proprietary`) has a small p-value, indicating evidence that in general, the type of control is truly associated with total costs. The only other predictor with a large p-value is duplicate. This indicates that we do not have evidence that change of ownership of a hospital during the fiscal year is related to the total costs of the hospital.
+
+Looking at the cross validation (CV) and test errors, we see that they are smallest for the models including number of beds, number of employees, total days, salaries, and inpatients. This indicates that these predictors are more strongly associated with the response than the others.
+
+## Multiple linear regression
+
+### Assumptions
+
+The assumptions for multiple linear regression are the same as those for simple linear regression outlined in the previous section.
+
+### Results
+
+The results for the main effects multiple linear regression model are summarized below.
+
+
+```{r}
+formula <- as.formula("total_costs ~ .")
+
+mod_mlr <- lm(formula, data = select(train_data, -fold))
+
+summary(mod_mlr)
+```
+
+```{r}
+cv_error_lm <- kfold_cv_lm(train_data, formula)
+
+cv_error_lm
+```
+
+```{r}
+test_error_lm <- compute_MSEP_test(formula, train_data, df_test)
+
+test_error_lm
+```
+
+```{r, include = TRUE}
+jtools::summ(mod_mlr)
+```
+
+The adjusted $R^2$ value of 0.94 indicates that 94 percent of the variability in total costs can be explained by the predictors. This $R^2$ value is quite high. The estimate of the test MSEP using CV is 0.071, and the test MSEP based on the held-out set is 0.106. These error rates are lower than any of the individual marginal linear regression error rates, indicating that when we include all predictors in one model, we can predict total costs more accurately than if we only include one predictor. 
+
+Looking at the coefficient estimates and p-values in the table above, we see that most predictors still have very small p-values, but some which were significant in the marginal linear regressions become insignificant in the multiple linear regression. Specifically, total days, number of beds, and total discharges have large p-values in the multiple regression when all three had very small p-values in the marginal models. This indicates that there is likely correlations between the predictors such that once we have already accounted for some of them, others do not add much further information. This is consistent with the pairs plot which shows strong linear relationships between several pairs of predictors. 
+
+
+## Multiple linear regression with interactions and transformations: 
+
+Based on our exploratory data analysis, there were no obvious transformations or interactions which were needed in order to satisfy the linear regression assumptions. However, we added a few transformations and interactions for experimentation purposes. For transformations, we added a quadratic term for salaries and total days. For interactions, we added one interaction between number of employees and total income as well as between number of employees and provider type. 
+
+### Assumptions
+
+The assumptions for multiple linear regression are the same as those for simple linear regression outlined in the previous section.
+
+
+### Results
+
+The results for the multiple linear regression model with interactions and transformations are summarized below.
+
+
+```{r}
+formula <-
+  as.formula("total_costs ~ . - total_days - salaries + poly(total_days, 2, raw = TRUE) + poly(salaries, 2, raw = TRUE) + fte_employees_on_payroll*total_income + fte_employees_on_payroll*provider_bin_Specialized")
+
+mod_mlr <- lm(formula, data = select(train_data, -fold))
+
+summary(mod_mlr)
+
+cv_error_lm2 <- kfold_cv_lm(train_data, formula)
+
+cv_error_lm2
+
+test_error_lm2 <- compute_MSEP_test(formula, train_data, df_test)
+
+test_error_lm2
+```
+
+```{r, include = TRUE}
+jtools::summ(mod_mlr)
+```
+
+The adjusted $R^2$ value of 0.94 indicates that this model with transformations and interactions explains about the same proportion of variablity in total costs as the main effects model. One interesting finding, however, is that the p-value for the quadratic term for total days has a significant p-value despite the main-effect for total days not being significant.
+
+
+The estimate of the test MSEP using CV is 0.114, and the test MSEP based on the held-out set is 0.081. These error values are very similar to those for the main effects model.
+
+## Regression Tree (with pruning)
+
+### Assumptions
+
+For the regression tree, the only assumption we are making is that the response is continuous. There are no parametric assumptions.
+
+### Results
+
+A plot of the pruned regression tree is displayed below. The optimal pruning size was found to be 9 via cross validation. 
+
+```{r}
+formula <- as.formula("total_costs ~ .")
+tree_train <- tree(
+  formula,
+  select(train_data, -fold)
+)
+
+# pruning -- find best size with cv
+set.seed(1)
+cv_tree <- cv.tree(tree_train)
+cv_tree$size[which(cv_tree$dev == min(cv_tree$dev))]
+
+# refit tree with pruning
+
+tree_pruned <- prune.tree(tree_train, best = 9)
+
+pred <- predict(tree_pruned, newdata = test_data)
+
+test_error_regtree <- mean((test_data$total_costs - pred)^2)
+
+test_error_regtree
+```
+
+We see that almost all splits in the tree are made based on the salaries predictor, indicating that salaries is the most important predictor. There are only two other predictors included in the tree, which are number of employees and total income.
+
+
+```{r}
+compute_MSEP_regtree <- function(train_data, formula, i) {
+  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
+  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
+
+  tree_train <- tree(
+    formula,
+    current_train_folds,
+  )
+
+  tree_pruned <- prune.tree(tree_train, best = 9)
+
+  pred <- predict(tree_pruned, newdata = current_test_fold)
+
+  MSEP <- mean((current_test_fold$total_costs - pred)^2)
+  return(MSEP)
+}
+
+
+kfold_cv_regtree <- function(train_data, formula, k = 10) {
+  MSEP_vec <- map_dbl(1:k, ~ compute_MSEP_regtree(train_data, formula, .x))
+  avg_MSEP <- mean(MSEP_vec)
+  return(avg_MSEP)
+}
+
+cv_error_regtree <- kfold_cv_regtree(train_data, formula)
+cv_error_regtree
+```
+
+```{r, include = TRUE}
+plot(tree_pruned)
+text(tree_pruned, cex = 0.6)
+```
+
+
+The estimate of the test MSEP using CV is 0.144, and the test MSEP based on the held-out set is 0.100. These error values are very similar to those for the multiple linear regression models.
+
