@@ -4,6 +4,7 @@ author: "Lindsay Knupp, Rose Porta, Johnny Rasnic"
 date: "2024-05-14"
 output: pdf_document
 urlcolor: blue
+extra_dependencies: ["float"]
 ---
 
 ```{r setup, include=FALSE}
@@ -441,7 +442,7 @@ The assumptions for multiple linear regression are the same as those for simple 
 The results for the multiple linear regression model with interactions and transformations are summarized below.
 
 
-```{r}
+```{r,fig.pos = "H", out.extra = ""}
 formula <-
   as.formula("total_costs ~ . - total_days - salaries + poly(total_days, 2, raw = TRUE) + poly(salaries, 2, raw = TRUE) + fte_employees_on_payroll*total_income + fte_employees_on_payroll*provider_bin_Specialized")
 
@@ -459,6 +460,8 @@ test_error_lm2
 ```
 
 ```{r, include = TRUE}
+a = jtools::summ(mod_mlr)
+
 jtools::summ(mod_mlr)
 ```
 
@@ -531,9 +534,9 @@ kfold_cv_regtree <- function(train_data, formula, k = 10) {
 
 cv_error_regtree <- kfold_cv_regtree(train_data, formula)
 cv_error_regtree
-```
+``` 
 
-```{r, include = TRUE}
+```{r, include = TRUE,fig.pos = "H", out.extra = ""}
 plot(tree_pruned)
 text(tree_pruned, cex = 0.6)
 ```
@@ -980,7 +983,7 @@ df_test = hpc_scaled |> filter(set == "Test") |> select(-c(set, fold))
 ## Best Subset
 
 ### Results
-In the plots below, we can see what variables are selected depending on what criterion we wish to use ($R^2$, adjusted $R^2$,etc.) for the full dataset. For the last plot, we run 10-fold CV to find the best model size to minimize the test MSE averaged across the folds. As we can see, we gain a significant reduction in the MSE from adding a non-intercept term, however, after that, the gains from additional variables in the model are comparatively quite small. Based on the 10-fold CV, we choose a model with 8 variables.
+In the plots below, we can see what variables are selected depending on what criterion we wish to use ($R^2$, adjusted $R^2$,etc.) for the full dataset. Each black box signifies that that variable was chosen. For the last plot, we run 10-fold CV to find the best model size to minimize the test MSE averaged across the folds. As we can see, we gain a significant reduction in the MSE from adding a non-intercept term. However, after that, the gains from additional variables in the model are comparatively quite small. Based on the 10-fold CV, we choose a model with 8 variables. We obtained a cross validation MSEP of $0.0613$ and a test MSEP of $0.105$. 
 
 ```{r, echo=FALSE,fig.height=4.4}
 library(leaps)
@@ -1040,7 +1043,7 @@ knitr::kable(data.frame(coeffs))
 ## Forward Stepwise
 
 ### Results
-We see near identical results between the exhaustive best subsets and the forward/backward stepwise methods.
+We see near identical results between the exhaustive best subsets selection and the forward/backward stepwise methods. We obtained a cross validation MSEP of $0.0613$ and a test MSEP of $0.105$.
 
 ```{r echo=FALSE,fig.height=4.4}
 library(leaps)
@@ -1101,7 +1104,7 @@ knitr::kable(data.frame(coeffs))
 
 ### Results 
 
-[Some text here so the plots don't push to next page]  
+Again, we obtained a cross validation MSEP of $0.0613$ and a test MSEP of $0.105$.  
 
 ```{r, echo=FALSE,fig.height=4.4}
 library(leaps)
@@ -1160,7 +1163,13 @@ knitr::kable(data.frame(coeffs))
 
 ## Ridge regression 
 
-### Results - Quantitative 
+### Quantitative 
+
+#### Assumptions 
+We use the continuous `total_costs` variable as our response. 
+
+#### Results
+Using cross validation, we obtained $\lambda = 0.01$ as the optimal tuning parameter. Using the entire dataset, we obtained a MSEP of $0.066$. 
 
 ```{r echo=FALSE}
 library(glmnet)
@@ -1188,7 +1197,14 @@ est = data.frame("Coefficient Estimate" = summary(coeffs)[,3])
 knitr::kable(as.data.frame(est,row.names = rownames))
 ```
 
-### Results - Qualitative
+### Qualitative
+
+#### Assumptions
+We use the binary `costs_bin` variable as our response. 
+
+#### Results
+Using cross validation, we obtain a $\lambda = 0.01$ as the optimal tuning parameter. Using the entire dataset, we obtain a MSEP of $0.182$. 
+
 
 ```{r echo=FALSE}
 library(glmnet)
@@ -1217,10 +1233,16 @@ knitr::kable(as.data.frame(est,row.names = rownames))
 ```
 
 ## Lasso 
+Below we have the Lasso selection results for predicting total costs. We can notice it selects 9 variables to have non-zero coefficients, which is close to the best model found with `regsubsets`.
 
-### Results - Quantitative
+### Quantitative 
 
-Below we have the Lasso selection results for predicting total costs. We can notice it selects 9 variables to have non-zero coefficients, which is close to the best model found with regsubsets.
+#### Assumptions
+We use the continuous `total_costs` variable as our response. 
+
+#### Results
+Using cross validation, we obtain a $\lambda = 0.01$ as the optimal tuning parameter. Using the entire dataset, we obtain a MSEP of $0.911$. 
+
 
 ```{r echo=FALSE}
 library(glmnet)
@@ -1251,7 +1273,14 @@ est1 = data.frame("Coefficient Estimate" = est)
 knitr::kable(as.data.frame(est1,row.names = rownames))
 ```
 
-### Results - Qualitative
+### Qualitative
+
+#### Assumptions
+We use the binary `costs_bin` variable as our response. 
+
+#### Results 
+Using cross validation, we obtain a $\lambda = 0.01$ as the optimal tuning parameter. Using the entire dataset, we obtain a MSEP of $0.182$. 
+
 
 ```{r echo=FALSE}
 library(glmnet)
@@ -1284,8 +1313,11 @@ knitr::kable(as.data.frame(est1,row.names = rownames))
 
 ## Principal Components Regression (PCR)
 
+### Assumptions 
+We use the continuous `total_costs` variable as our response. 
+
 ### Results 
-The Test MSE for train-test split: 0.0944657820219513 and the average Test MSE across 10-folds: 0.0845142366389833. 
+We obtained a cross validation MSEP of $0.0845$ and a test MSEP of $0.094$. 
 
 ```{r echo=FALSE}
 library(pls)
@@ -1315,9 +1347,29 @@ erates[i] = mean((pred - test.X$total_costs)^2) }
 
 ```
 
+# Summary Table Variable Selection
+
+The following shows a comparison of the MSEPs across all the variable selection methods.
+
+```{r}
+
+method <- c("Best Subset","Forward Stepwise","Backward Stepwise","Ridge (Quant.)","Ridge (Qual)","Lasso (Quant)","Lasso (Qual)","PCR")
+
+cv_error <- c(0.0613,0.0613,0.0613,NA,NA,NA,NA,0.0845)
+
+test_error <- c(0.105,0.105,0.105,0.066,0.182,0.911,0.182,0.094)
+
+error_summary <- tibble(method,cv_error,test_error)
+
+knitr::kable(error_summary)
+
+```
+
+
+
 # Bootstrap SEs
 
-Our bootstrap study looks at the standard errors of the coefficient estimates found through ridge regression, with 1000 bootstrap samples. Our data is scaled, which is why our standard errors are all approximately the same magnitude.
+Our bootstrap study looks at the standard errors of the coefficient estimates found through our quantitative ridge regression, with 1000 bootstrap samples. Our data is scaled, which is why our standard errors are all approximately the same magnitude.
 
 ```{r echo=FALSE}
 library(boot)
@@ -1325,7 +1377,7 @@ library(glmnet)
 
 X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
 
-B = 100
+B = 1000
 
 coeffs = matrix(rep(0,B*14), nrow=B)
 
@@ -1422,7 +1474,7 @@ ggplot(df) +
 ## Multiple Logistic Regression 
 
 ### Assumptions 
-We assume that our predictors are not correlated with one another. 
+We assume that our response is Bernoulli. 
 
 ### Results 
 The coefficients and standard errors associated with our model can be found below. 
@@ -1456,7 +1508,7 @@ rates %>%
 ## Multiple Logistic Regression with Transformations 
 
 ### Assumptions 
-We again assume that our predictors are not correlated with one another.
+We assume that our response is Bernoulli. 
 
 ### Results 
 We decided to transform `total_income`,`fte_employees_on_payroll`, `salaries`, and `total_days` to experiment with how less significant predictors in conjunction with `salaries` affected the response. We computed polynomial models up to degree $2$ for `total_days` and interaction terms between `total_income` & `fte_employees_on_payroll` and between `fte_employees_on_payroll` & `salaries`.
@@ -1658,16 +1710,70 @@ rates %>%
 We make no assumptions on the structure of the data. 
 
 ### Results 
+Through cross validation, the tuning parameter was selected as $\lambda = 0.08$. This produced a cross validation error of $0.036$ and a true test error of $0.044$, both relatively small. The variables `salaries` had the largest relative influence of $83$ which was significantly larger than any of the other predictors. 
+
+```{r}
+table = read_csv("~/hospital-costs/lindsayknupp/final_files/boosting.csv")
+
+knitr::kable(table)
+```
+
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.932,0.982,0.0181,0.0680)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
 
 ## Neural Network 
+To build our neural network, we included $4$ hidden layers and $1$ output layer. Within our hidden layers, we had $2$ dense units that used the ReLU activation function and $2$ dropout units that aimed to prevent overfitting. Our output layer used a softmax activation function in order to predict the appropriate class label.
+
+### Assumptions 
+There are no model assumptions.
+
+### Results 
+After training our model for $10$ epochs, we got a cross validation error of $0.044$ and a true test error of $0.038$. Both comparable with our other qualitative prediction methods.
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.915,0.993,0.007,0.085)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+# Summary Table Qualitative Outcome
+
+The following shows a comparison of the error rates and true/false positive and negative rates across all the qualitative outcome methods.
+
+```{r}
+summary = read_csv("~/hospital-costs/lindsayknupp/final_files/qualsummary.csv")
+
+knitr::kable(summary)
+
+```
+
+
+
 
 # Simulation Study 
 
 We were interested in understanding how our data affected the optimal choice of $k$ in the $k$ -nearest neighbors algorithm. We already experienced some variability when running our model through on different computers. Therefore, we wanted to see if more simulated datasets would produce the same variablility. 
 
-To replicate our $13$ predictors and $2$ response variables, we used a package called `faux` to simulate our numerical predictors from a multivariate normal distribution. 
+We generated our continuous predictors by sampling from a multivariate normal distribution. We generated our categorical predictors by sampling from a binomial distribution with our known class probabilities. We generated our "true" continuous response with our multiple linear regression model (trained on the true dataset). Normal random noise $N \sim (0,0.25)$ was added to these predictions to generate our final continuous response. Lastly, we classified each observation as above/below the `total_costs` median to generate our class labels. We tried $k\in [1,100]$ in each simulation and picked the best based on the error rate. 
 
-After $200$, simulations, the chosen $k$ ranged from $[1,90]$, almost the entire range of $k$s that we tried. The data did have a right skew and most simulations chose a $k \in [0,25]$. 
 ```{r,warning=FALSE,message=FALSE,echo=FALSE}
 library(ggplot2)
 library(readr)
@@ -1677,7 +1783,7 @@ results = read_csv("~/hospital-costs/lindsayknupp/final_files/sim_study_results.
 
 plot1 = ggplot(results) +
   geom_histogram(aes(x=k),bins=15) +
-  ggtitle("Optimal k over 200 datasets") +
+  ggtitle("Distribution of Chosen Optimal k") +
   xlab("k") + 
   ylab("count")
 
@@ -1687,17 +1793,36 @@ plot2 = ggplot(results) +
 
 
 grid.arrange(plot1,plot2,nrow=2)
+```
+After $200$, simulations, the chosen $k$ ranged from $[1,90]$, almost the entire range of $k$s that we tried. However, most of the data is concentrated in the range from $[1,25]$, which is consistent with our original results. We also found it interesting that in some simulations, a $k = 76$ could produce an error rate comparable to $k=1$. This suggests that our data does not have a strong impact on the choice of $k$. 
 
-
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
 plot3 = ggplot(results) + 
-  geom_histogram(aes(x=var),bins=15)
+  geom_histogram(aes(x=var),bins=15) + 
+  ggtitle("Distribution of Variances")
 
 plot4 = ggplot(results) +
-  geom_point(aes(x=k,y=var)) +
-  ggtitle("Error variance vs optimal k")
+  geom_point(aes(x=i,y=var)) +
+  ggtitle("Error variance across k") + 
+  xlab("Simulation number")
 
 grid.arrange(plot3,plot4,nrow = 2)
-
-
 ```
+Because of the variability of our $k$, we then wondered if the best $k$ being chosen was close to other $k$ error rates, suggesting low variability of the error rates. However, there was no clear pattern emerging across the simulations. Some simulations had lower variance, all choices of $k$ produced similar error rates, and some simulations had higher variance, all choices of $k$ produced differing error rates. However, we must also note that with our scaled data, we are unfamiliar about what constitutes "small" or "large" quantities. 
+
+# Conclusions 
+Most Important Predictors: Salaries and Number of Employees
+However, each predictor is associated with the response
+Random Forest has lowest test MSEP, but test error is similar across all methods
+
+We can see that salaries, inpatients, and the dummy variable for whether a hospital is specialized or not seem to play a major role overall in our prediction, since they’re selected in almost all the models by size. Conversely, total days and whether a hospital had duplicate records in our dataset did not seem to play a major role in our models.
+
+Lasso selects 10 variables to be nonzero, dropping three in the process. This model size is somewhat close to the model size selected by our exhaustive and stepwise methods. The variables dropped are the duplicate dummy variable, the governmental dummy variable, and the number of beds.
+
+
+
+
+We found that salaries greatly affects a hospital's total costs, which is intuitive. 
+
+
 

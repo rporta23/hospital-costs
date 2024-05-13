@@ -1263,7 +1263,7 @@ neighbors <- 1:100
 optimal_n <- 7
 optimal_error_rate <- 0.05329245
 
-# cv_knn = optimal_error_rate
+cv_knn = optimal_error_rate
 ```
 
 ### Compare true test error rate
@@ -1436,11 +1436,11 @@ model_info$falseneg = 1 - model_info$truepos
 
 model_info$error_rate <- mean( (test$costs_bin != pred) )
 
-testMSE_glm = model_info$error_rate
-truepos_glm = model_info$truepos
-trueneg_glm = model_info$trueneg
-falsepos_glm = model_info$falsepos
-falseneg_glm = model_info$falseneg
+testMSE_trans_glm = model_info$error_rate
+truepos_trans_glm = model_info$truepos
+trueneg_trans_glm = model_info$trueneg
+falsepos_trans_glm = model_info$falsepos
+falseneg_trans_glm = model_info$falseneg
 
 
 formula = c("costs_bin ~ .")
@@ -2201,37 +2201,49 @@ testMSE_neural_net = 0.0385289
 ## Qualitative summary
 ```{r}
 
-method <- c("KNN","Multiple Logistic Regression","LDA","QDA","Naive Bayes (Gaussian)",
-            "Naive Bayes (KDE)","Decision Tree","Basgging","Random Forest",
+method <- c("KNN","Multiple Logistic Regression","Multiple Logistic Regression (Transformations)","LDA","QDA","Naive Bayes (Gaussian)",
+            "Naive Bayes (KDE)","Decision Tree","Bagging","Random Forest",
             "Boosting","Neural Net")
 
-cv_error <- c(cv_knn,cv_glm,cv_lda,cv_qda,cv_nb,cv_nb_kde,cv_decision_tree,
+cv_error <- c(cv_knn,cv_glm,cv_trans_glm,cv_lda,cv_qda,cv_nb,cv_nb_kde,
+              cv_decision_tree,
               cv_bagging,cv_random_forest,cv_boosting,cv_neural_network)
 
-error_rates <- c(testMSE_knn,testMSE_glm,testMSE_lda,testMSE_qda,testMSE_nb,
+error_rate <- c(testMSE_knn,testMSE_glm,testMSE_trans_glm,testMSE_lda,
+                testMSE_qda,testMSE_nb,
                 testMSE_nb_kde,testMSE_decision_tree,testMSE_bagging,
                 testMSE_random_forest,testMSE_boosting,testMSE_neural_net)
 
-true_pos <- c(truepos_knn,truepos_glm,truepos_lda,truepos_qda,truepos_nb,
+true_pos <- c(truepos_knn,truepos_glm,truepos_trans_glm,truepos_lda,
+              truepos_qda,truepos_nb,
               truepos_nb_kde,truepos_decision_tree,truepos_bagging,
               truepos_random_forest,truepos_boosting,truepos_neural_net)
 
-true_neg <- c(trueneg_knn,trueneg_glm,trueneg_lda,trueneg_qda,trueneg_nb,
+true_neg <- c(trueneg_knn,trueneg_glm,trueneg_trans_glm,trueneg_lda,
+              trueneg_qda,trueneg_nb,
               trueneg_nb_kde,trueneg_decision_tree,trueneg_bagging,
               trueneg_random_forest,trueneg_boosting,trueneg_neural_net)
 
-false_pos <- c(falsepos_knn,falsepos_glm,falsepos_lda,falsepos_qda,falsepos_nb,
+false_pos <- c(falsepos_knn,falsepos_glm,falsepos_trans_glm,falsepos_lda,
+               falsepos_qda,falsepos_nb,
               falsepos_nb_kde,falsepos_decision_tree,falsepos_bagging,
               falsepos_random_forest,falsepos_boosting,falsepos_neural_net)
 
-false_neg <- c(falseneg_knn,falseneg_glm,falseneg_lda,falseneg_qda,falseneg_nb,
+false_neg <- c(falseneg_knn,falseneg_glm,falseneg_trans_glm,falseneg_lda,
+               falseneg_qda,falseneg_nb,
               falseneg_nb_kde,falseneg_decision_tree,falseneg_bagging,
               falseneg_random_forest,falseneg_boosting,falseneg_neural_net)
 
-error_summary <- tibble(method,cv_error,error_rates,true_pos,true_neg,
+error_summary <- tibble(method,cv_error,error_rate,true_pos,true_neg,
                         false_pos,false_neg)
 
+error_summary = error_summary %>%
+  mutate_if(is.numeric, ~ round(.x, 3))
+
 knitr::kable(error_summary)
+
+write_csv(error_summary,file="qualsummary.csv")
+
 ```
 
 # Bootstrap CI

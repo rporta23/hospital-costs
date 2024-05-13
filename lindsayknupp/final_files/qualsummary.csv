@@ -1,0 +1,13 @@
+method,cv_error,error_rate,true_pos,true_neg,false_pos,false_neg
+KNN,0.053,0.049,0.912,0.993,0.007,0.088
+Multiple Logistic Regression,0.073,0.033,0.946,0.989,0.011,0.054
+Multiple Logistic Regression (Transformations),0.13,0.158,0.694,1,0,0.306
+LDA,0.175,0.165,0.762,0.913,0.087,0.238
+QDA,0.115,0.119,0.782,0.986,0.014,0.218
+Naive Bayes (Gaussian),0.127,0.137,0.752,0.982,0.018,0.248
+Naive Bayes (KDE),0.073,0.081,0.867,0.975,0.025,0.133
+Decision Tree,0.051,0.06,0.898,0.986,0.014,0.102
+Bagging,0.038,0.028,0.959,0.986,0.014,0.041
+Random Forest,0.037,0.03,0.963,0.978,0.022,0.037
+Boosting,0.036,0.044,0.932,0.982,0.018,0.068
+Neural Net,0.044,0.039,0.915,0.996,0.004,0.085
