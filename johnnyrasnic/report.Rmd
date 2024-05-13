@@ -7,7 +7,7 @@ output:
   pdf_document: default
 ---
 
-```{r echo=FALSE}
+```{r echo=FALSE, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, warnings=FALSE)
 library(tidyverse)
 hpc = read_csv(here::here("hpc.csv"))
@@ -116,23 +116,38 @@ df_test = hpc_scaled |> filter(set == "Test") |> select(-c(set, fold))
 
 ## Best Subset
 
-In the plots below, we can see what variables are selected depending on what criterion we wish to use ($R^2$, adjusted $R^2$,etc.) for the full dataset. For the last plot, we run 10-fold CV to find the best model size to minimize the test MSE averaged across the folds. As we can see, we gain a significant reduction in the MSE from adding a non-intercept term, however, after that, the gains from additional variables in the model are comparatively quite small. Based on the 10-fold CV, we choose a model with 8 variables.
-
 ```{r, echo=FALSE}
 library(leaps)
 
-X = hpc_scaled |> select(-c(fold,set, costs_bin))
+train.X = hpc_scaled |> filter(set == "Train") |> select(-c(fold,set,costs_bin))
+test.X = hpc_scaled |> filter(set == "Test") |> select(-c(fold,set,costs_bin))
 
-erates = matrix(rep(0, 10*13), nrow = 10, ncol = 13)
+erate = rep(0, 13)
 
-best_subset = regsubsets(total_costs ~ ., data = X, nvmax = ncol(X))
+best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X))
+
+summ = summary(best_subset)
+
+for (j in 1:ncol(train.X)-1) {
+    selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][j,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+    temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    erate[j] = mean((pred - test.X$total_costs)^2)
+}
 
 plot(best_subset, scale="r2")
 plot(best_subset, scale="adjr2")
 plot(best_subset, scale="Cp")
 plot(best_subset, scale="bic")
 
-i=1
+erates = matrix(rep(0, 10*13), nrow = 10, ncol = 13)
+
 for (i in 1:10) {
   train.X = hpc_scaled |> filter(fold != i) |> select(-c(costs_bin, set, fold))
   test.X = hpc_scaled |> filter(fold == i) |> select(-c(costs_bin, set, fold))
@@ -168,19 +183,46 @@ best_subset = regsubsets(total_costs ~ ., data = data)
 coeffs = as.matrix(coef(best_subset, 8))
 colnames(coeffs) = c("Coefficient Estimate")
 
-coeffs
+selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][8,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+
+temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    cv_erate = mean((pred - test.X$total_costs)^2)
+
 ```
 
 ## Forward Stepwise
 
-We see near identical results between the exhaustive best subsets and the forward/backward stepwise methods.
-
-```{r echo=FALSE}
+```{r, echo=FALSE}
 library(leaps)
 
-X = hpc_scaled
+train.X = hpc_scaled |> filter(set == "Train") |> select(-c(fold,set,costs_bin))
+test.X = hpc_scaled |> filter(set == "Test") |> select(-c(fold,set,costs_bin))
 
-best_subset = regsubsets(total_costs ~ ., data = X, nvmax = ncol(train.X))
+erate = rep(0, 13)
+
+best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X), method = "forward")
+
+summ = summary(best_subset)
+
+for (j in 1:ncol(train.X)-1) {
+    selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][j,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+    temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    erate[j] = mean((pred - test.X$total_costs)^2)
+}
 
 plot(best_subset, scale="r2")
 plot(best_subset, scale="adjr2")
@@ -215,7 +257,7 @@ plot(1:13, erates[1,],
      xlab = "Model Size",
      ylab = "Average Test MSE")
 
-title("Forward Stepwise Selection")
+title("Forward Stepwise")
 
 data = hpc_scaled |> select(-c(fold,set,costs_bin))
 
@@ -224,7 +266,18 @@ best_subset = regsubsets(total_costs ~ ., data = data)
 coeffs = as.matrix(coef(best_subset, 8))
 colnames(coeffs) = c("Coefficient Estimate")
 
-coeffs
+selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][8,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+
+temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    cv_erate = mean((pred - test.X$total_costs)^2)
+
 ```
 
 ## Backward Stepwise
@@ -232,10 +285,27 @@ coeffs
 ```{r, echo=FALSE}
 library(leaps)
 
-train.X = hpc_scaled |> filter(set == "Train") |> select(-c(costs_bin, set, fold))
-test.X = hpc_scaled |> filter(set == "Test") |> select(-c(costs_bin, set, fold))
+train.X = hpc_scaled |> filter(set == "Train") |> select(-c(fold,set,costs_bin))
+test.X = hpc_scaled |> filter(set == "Test") |> select(-c(fold,set,costs_bin))
 
-best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X))
+erate = rep(0, 13)
+
+best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X), method="backward")
+
+summ = summary(best_subset)
+
+for (j in 1:ncol(train.X)-1) {
+    selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][j,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+    temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    erate[j] = mean((pred - test.X$total_costs)^2)
+}
 
 plot(best_subset, scale="r2")
 plot(best_subset, scale="adjr2")
@@ -266,11 +336,11 @@ for (i in 1:10) {
 erates = as_tibble(erates) |> summarize(across(V1:V13,mean))
 
 plot(1:13, erates[1,], 
-     col = ifelse(1:12 == which.min(erates), "red", "black"),
+     col = ifelse(1:13 == which.min(erates), "red", "black"),
      xlab = "Model Size",
      ylab = "Average Test MSE")
 
-title("Backward Stepwise Selection")
+title("Backward Stepwise")
 
 data = hpc_scaled |> select(-c(fold,set,costs_bin))
 
@@ -279,8 +349,21 @@ best_subset = regsubsets(total_costs ~ ., data = data)
 coeffs = as.matrix(coef(best_subset, 8))
 colnames(coeffs) = c("Coefficient Estimate")
 
-coeffs
+selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][8,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+
+temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    cv_erate = mean((pred - test.X$total_costs)^2)
+
 ```
+
+With best subset, forward stepwise, and backward stepwise selection, all choose a model size of 8 as the model with the lowest average test MSE across 10 fold cross validation.
 
 ## Ridge regression (find the best tuning parameter using cross-validation)
 
@@ -292,19 +375,25 @@ library(glmnet)
 set.seed(1)
 
 train.X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
+
 x = scale(model.matrix(total_costs ~ ., data = train.X)[ , -1])
 
 lambda_grid = 10 ^ seq(10, -2, length = 100)
-ridge_reg = cv.glmnet(x, hpc_scaled$total_costs, alpha = 0, type.measure = "mse", lambda = lambda_grid, nfolds=10)
+ridge_reg = cv.glmnet(x, train.X$total_costs, alpha = 0, type.measure = "mse", lambda = lambda_grid, nfolds=10)
 lambda = ridge_reg$lambda.min
 
-ridge_model = glmnet(x, hpc_scaled$total_costs,alpha = 0, lambda = lambda, nfolds=10)
+ridge_model = glmnet(x, train.X$total_costs,alpha = 0, lambda = lambda, nfolds=10)
 
 coeffs = coef(ridge_model)
 
 colnames(coeffs) = c("Coefficient Estimate")
 
 coeffs
+
+pred = predict(ridge_model, newx=x)
+
+erate= mean((pred-train.X$total_costs)^2)
+
 ```
 
 ### Qualitative
@@ -328,13 +417,17 @@ coeffs = coef(ridge_model)
 colnames(coeffs) = c("Coefficient Estimate")
 
 coeffs
+
+pred = round(predict(ridge_model, newx=x, type = "response"))
+
+erate= mean((pred != train.X$costs_bin))
 ```
 
 ## Lasso (find the best tuning parameter using cross-validation)
 
 ### Quantitative
 
-Below we have the Lasso selection results for predicting total costs. We can notice it selects 9 variables to have non-zero coefficients, which is close to the best model found with regsubsets.
+Below we have the Lasso selection results for predicting total costs:
 
 ```{r echo=FALSE}
 library(glmnet)
@@ -356,6 +449,10 @@ coeffs = coef(lasso_model)
 colnames(coeffs) = c("Coefficient Estimate")
 
 coeffs
+
+pred = predict(ridge_model, newx=x)
+
+erate= mean((pred-train.X$total_costs)^2)
 ```
 
 ### Qualitative
@@ -380,6 +477,10 @@ coeffs = coef(lasso_model)
 colnames(coeffs) = c("Coefficient Estimate")
 
 coeffs
+
+pred = round(predict(ridge_model, newx=x, type = "response"))
+
+erate= mean((pred != train.X$costs_bin))
 ```
 
 ## Principal Components Regression (PCR)
@@ -387,8 +488,7 @@ coeffs
 ```{r echo=FALSE}
 library(pls)
 
-train.X = df_train 
-
+train.X = df_train
 test.X = df_test
 
 pcr_model = pcr(total_costs ~ ., data = train.X)
@@ -397,16 +497,20 @@ pred = predict(pcr_model, newdata = test.X)
 
 print(paste("Test MSE for train-test split:", mean((pred - test.X$total_costs)^2)))
 
+
 erates = rep(0,10)
 
-for (i in 1:10) { train.X = hpc_scaled |> filter(fold != i) |> select(-c(set,fold,costs_bin)) 
-test.X = hpc_scaled |> filter(fold == i) |> select(-c(set,fold,costs_bin))
+for (i in 1:10) {
+  train.X = hpc_scaled |> filter(fold != i) |> select(-c(set,fold,costs_bin))
+  test.X = hpc_scaled |> filter(fold == i) |> select(-c(set,fold,costs_bin))
 
-pcr_model = pcr(total_costs ~ ., data = train.X)
+  pcr_model = pcr(total_costs ~ ., data = train.X)
 
-pred = predict(pcr_model, newdata = test.X)
+  pred = predict(pcr_model, newdata = test.X)
 
-erates[i] = mean((pred - test.X$total_costs)^2) }
+  erates[i] = mean((pred - test.X$total_costs)^2)
+}
+
 
 print(paste("Average Test MSE across 10-folds:", mean(erates)))
 

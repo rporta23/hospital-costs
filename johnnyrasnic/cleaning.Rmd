@@ -215,9 +215,9 @@ hpc_dummies$fold = folds
 # Normalize quantitative variables
 
 ```{r echo=FALSE}
-hpc_quant = hpc_dummies |> select(-c(provider_bin_Specialized, control_bin_Governmental, control_bin_Voluntary, costs_bin, rural, set, fold))
+hpc_quant = hpc_dummies |> select(-c(duplicate, provider_bin_Specialized, control_bin_Governmental, control_bin_Voluntary, costs_bin, rural, set, fold))
 
-hpc_qual = hpc_dummies |> select(c(provider_bin_Specialized, control_bin_Governmental, control_bin_Voluntary, costs_bin, rural, set, fold))
+hpc_qual = hpc_dummies |> select(c(duplicate, provider_bin_Specialized, control_bin_Governmental, control_bin_Voluntary, costs_bin, rural, set, fold))
 
 hpc_scaled = as_tibble(scale(hpc_quant) |> cbind(hpc_qual))
 
@@ -576,14 +576,34 @@ modelnn %>%
 ```{r, echo=FALSE}
 library(leaps)
 
-erates = matrix(rep(0, 10*12), nrow = 10, ncol = 12)
+train.X = hpc_scaled |> filter(set == "Train") |> select(-c(fold,set,costs_bin))
+test.X = hpc_scaled |> filter(set == "Test") |> select(-c(fold,set,costs_bin))
+
+erate = rep(0, 13)
 
 best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X))
+
+summ = summary(best_subset)
+
+for (j in 1:ncol(train.X)-1) {
+    selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][j,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+    temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    erate[j] = mean((pred - test.X$total_costs)^2)
+}
 
 plot(best_subset, scale="r2")
 plot(best_subset, scale="adjr2")
 plot(best_subset, scale="Cp")
 plot(best_subset, scale="bic")
+
+erates = matrix(rep(0, 10*13), nrow = 10, ncol = 13)
 
 for (i in 1:10) {
   train.X = hpc_scaled |> filter(fold != i) |> select(-c(costs_bin, set, fold))
@@ -604,10 +624,10 @@ for (i in 1:10) {
   }
 }
 
-erates = as_tibble(erates) |> summarize(across(V1:V12,mean))
+erates = as_tibble(erates) |> summarize(across(V1:V13,mean))
 
-plot(1:12, erates[1,], 
-     col = ifelse(1:12 == which.min(erates), "red", "black"),
+plot(1:13, erates[1,], 
+     col = ifelse(1:13 == which.min(erates), "red", "black"),
      xlab = "Model Size",
      ylab = "Average Test MSE")
 
@@ -620,24 +640,53 @@ best_subset = regsubsets(total_costs ~ ., data = data)
 coeffs = as.matrix(coef(best_subset, 8))
 colnames(coeffs) = c("Coefficient Estimate")
 
-coeffs
+selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][8,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+
+temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    cv_erate = mean((pred - test.X$total_costs)^2)
+
 ```
 
 ## Forward Stepwise
 
-```{r echo=FALSE}
+```{r, echo=FALSE}
 library(leaps)
 
-X = hpc_scaled
+train.X = hpc_scaled |> filter(set == "Train") |> select(-c(fold,set,costs_bin))
+test.X = hpc_scaled |> filter(set == "Test") |> select(-c(fold,set,costs_bin))
 
-best_subset = regsubsets(total_costs ~ ., data = X, nvmax = ncol(train.X))
+erate = rep(0, 13)
+
+best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X), method = "forward")
+
+summ = summary(best_subset)
+
+for (j in 1:ncol(train.X)-1) {
+    selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][j,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+    temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    erate[j] = mean((pred - test.X$total_costs)^2)
+}
 
 plot(best_subset, scale="r2")
 plot(best_subset, scale="adjr2")
 plot(best_subset, scale="Cp")
 plot(best_subset, scale="bic")
 
-erates = matrix(rep(0, 10*12), nrow = 10, ncol = 12)
+erates = matrix(rep(0, 10*13), nrow = 10, ncol = 13)
 
 for (i in 1:10) {
   train.X = hpc_scaled |> filter(fold != i) |> select(-c(costs_bin, set, fold))
@@ -658,14 +707,14 @@ for (i in 1:10) {
   }
 }
 
-erates = as_tibble(erates) |> summarize(across(V1:V12,mean))
+erates = as_tibble(erates) |> summarize(across(V1:V13,mean))
 
-plot(1:12, erates[1,], 
-     col = ifelse(1:12 == which.min(erates), "red", "black"),
+plot(1:13, erates[1,], 
+     col = ifelse(1:13 == which.min(erates), "red", "black"),
      xlab = "Model Size",
      ylab = "Average Test MSE")
 
-title("Forward Stepwise Selection")
+title("Forward Stepwise")
 
 data = hpc_scaled |> select(-c(fold,set,costs_bin))
 
@@ -674,7 +723,18 @@ best_subset = regsubsets(total_costs ~ ., data = data)
 coeffs = as.matrix(coef(best_subset, 8))
 colnames(coeffs) = c("Coefficient Estimate")
 
-coeffs
+selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][8,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+
+temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    cv_erate = mean((pred - test.X$total_costs)^2)
+
 ```
 
 ## Backward Stepwise
@@ -682,17 +742,34 @@ coeffs
 ```{r, echo=FALSE}
 library(leaps)
 
-train.X = hpc_scaled |> filter(set == "Train") |> select(-c(costs_bin, set, fold))
-test.X = hpc_scaled |> filter(set == "Test") |> select(-c(costs_bin, set, fold))
+train.X = hpc_scaled |> filter(set == "Train") |> select(-c(fold,set,costs_bin))
+test.X = hpc_scaled |> filter(set == "Test") |> select(-c(fold,set,costs_bin))
 
-best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X))
+erate = rep(0, 13)
+
+best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X), method="backward")
+
+summ = summary(best_subset)
+
+for (j in 1:ncol(train.X)-1) {
+    selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][j,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+    temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    erate[j] = mean((pred - test.X$total_costs)^2)
+}
 
 plot(best_subset, scale="r2")
 plot(best_subset, scale="adjr2")
 plot(best_subset, scale="Cp")
 plot(best_subset, scale="bic")
 
-erates = matrix(rep(0, 10*12), nrow = 10, ncol = 12)
+erates = matrix(rep(0, 10*13), nrow = 10, ncol = 13)
 
 for (i in 1:10) {
   train.X = hpc_scaled |> filter(fold != i) |> select(-c(costs_bin, set, fold))
@@ -713,14 +790,14 @@ for (i in 1:10) {
   }
 }
 
-erates = as_tibble(erates) |> summarize(across(V1:V12,mean))
+erates = as_tibble(erates) |> summarize(across(V1:V13,mean))
 
-plot(1:12, erates[1,], 
-     col = ifelse(1:12 == which.min(erates), "red", "black"),
+plot(1:13, erates[1,], 
+     col = ifelse(1:13 == which.min(erates), "red", "black"),
      xlab = "Model Size",
      ylab = "Average Test MSE")
 
-title("Backward Stepwise Selection")
+title("Backward Stepwise")
 
 data = hpc_scaled |> select(-c(fold,set,costs_bin))
 
@@ -729,7 +806,18 @@ best_subset = regsubsets(total_costs ~ ., data = data)
 coeffs = as.matrix(coef(best_subset, 8))
 colnames(coeffs) = c("Coefficient Estimate")
 
-coeffs
+selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][8,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+
+temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    cv_erate = mean((pred - test.X$total_costs)^2)
+
 ```
 
 With best subset, forward stepwise, and backward stepwise selection, all choose a model size of 8 as the model with the lowest average test MSE across 10 fold cross validation.
@@ -744,19 +832,25 @@ library(glmnet)
 set.seed(1)
 
 train.X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
+
 x = scale(model.matrix(total_costs ~ ., data = train.X)[ , -1])
 
 lambda_grid = 10 ^ seq(10, -2, length = 100)
-ridge_reg = cv.glmnet(x, hpc_scaled$total_costs, alpha = 0, type.measure = "mse", lambda = lambda_grid, nfolds=10)
+ridge_reg = cv.glmnet(x, train.X$total_costs, alpha = 0, type.measure = "mse", lambda = lambda_grid, nfolds=10)
 lambda = ridge_reg$lambda.min
 
-ridge_model = glmnet(x, hpc_scaled$total_costs,alpha = 0, lambda = lambda, nfolds=10)
+ridge_model = glmnet(x, train.X$total_costs,alpha = 0, lambda = lambda, nfolds=10)
 
 coeffs = coef(ridge_model)
 
 colnames(coeffs) = c("Coefficient Estimate")
 
 coeffs
+
+pred = predict(ridge_model, newx=x)
+
+erate= mean((pred-train.X$total_costs)^2)
+
 ```
 
 ### Qualitative
@@ -780,6 +874,10 @@ coeffs = coef(ridge_model)
 colnames(coeffs) = c("Coefficient Estimate")
 
 coeffs
+
+pred = round(predict(ridge_model, newx=x, type = "response"))
+
+erate= mean((pred != train.X$costs_bin))
 ```
 
 ## Lasso (find the best tuning parameter using cross-validation)
@@ -808,6 +906,10 @@ coeffs = coef(lasso_model)
 colnames(coeffs) = c("Coefficient Estimate")
 
 coeffs
+
+pred = predict(ridge_model, newx=x)
+
+erate= mean((pred-train.X$total_costs)^2)
 ```
 
 ### Qualitative
@@ -832,6 +934,10 @@ coeffs = coef(lasso_model)
 colnames(coeffs) = c("Coefficient Estimate")
 
 coeffs
+
+pred = round(predict(ridge_model, newx=x, type = "response"))
+
+erate= mean((pred != train.X$costs_bin))
 ```
 
 ## Principal Components Regression (PCR)
