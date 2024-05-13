@@ -439,7 +439,9 @@ The assumptions for multiple linear regression are the same as those for simple 
 
 ### Results
 
-The results for the multiple linear regression model with interactions and transformations are summarized below.
+The results for the multiple linear regression model with interactions and transformations are summarized below. 
+*The coefficient table is on page 10 within the "Regression Tree (with pruning)" section. 
+
 
 
 ```{r,fig.pos = "H", out.extra = ""}
@@ -467,7 +469,6 @@ jtools::summ(mod_mlr)
 
 The adjusted $R^2$ value of 0.94 indicates that this model with transformations and interactions explains about the same proportion of variablity in total costs as the main effects model. One interesting finding, however, is that the p-value for the quadratic term for total days has a significant p-value despite the main-effect for total days not being significant.
 
-
 The estimate of the test MSEP using CV is 0.114, and the test MSEP based on the held-out set is 0.081. These error values are very similar to those for the main effects model.
 
 
@@ -479,7 +480,9 @@ For the regression tree, the only assumption we are making is that the response 
 
 ### Results
 
-A plot of the pruned regression tree is displayed below. The optimal pruning size was found to be 9 via cross validation. 
+A plot of the pruned regression tree is displayed below. The optimal pruning size was found to be 9 via cross validation. We see that almost all splits in the tree are made based on the salaries predictor, indicating that salaries is the most important predictor. There are only two other predictors included in the tree, which are number of employees and total income. The estimate of the test MSEP using CV is 0.144, and the test MSEP based on the held-out set is 0.100. These error values are very similar to those for the multiple linear regression models.
+*The decision tree is shown underneath the coefficient table on page 10.
+
 
 ```{r}
 formula <- as.formula("total_costs ~ .")
@@ -503,8 +506,7 @@ test_error_regtree <- mean((test_data$total_costs - pred)^2)
 
 test_error_regtree
 ```
-
-We see that almost all splits in the tree are made based on the salaries predictor, indicating that salaries is the most important predictor. There are only two other predictors included in the tree, which are number of employees and total income.
+<!-- We see that almost all splits in the tree are made based on the salaries predictor, indicating that salaries is the most important predictor. There are only two other predictors included in the tree, which are number of employees and total income. -->
 
 
 ```{r}
@@ -536,13 +538,13 @@ cv_error_regtree <- kfold_cv_regtree(train_data, formula)
 cv_error_regtree
 ``` 
 
-```{r, include = TRUE,fig.pos = "H", out.extra = ""}
+```{r, include = TRUE,fig.height = 3.6}
 plot(tree_pruned)
 text(tree_pruned, cex = 0.6)
 ```
 
 
-The estimate of the test MSEP using CV is 0.144, and the test MSEP based on the held-out set is 0.100. These error values are very similar to those for the multiple linear regression models.
+<!-- The estimate of the test MSEP using CV is 0.144, and the test MSEP based on the held-out set is 0.100. These error values are very similar to those for the multiple linear regression models. -->
 
 
 ## Bagging
