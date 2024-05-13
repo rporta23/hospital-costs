@@ -1,0 +1,1703 @@
+---
+title: "Predictive Analysis of Hospital Costs: A Comparative Study of Statistical Learning Techniques"
+author: "Lindsay Knupp, Rose Porta, Johnny Rasnic"
+date: "2024-05-14"
+output: pdf_document
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Dataset
+
+Our data was collected from [Centers for Medicare & Medicaid Services](https://data.cms.gov/provider-compliance/cost-report/hospital-provider-cost-report) on April 03, 2024. It features information about hospitals through annual cost reports in $2020$. It had $5712$ observations and we used $90\%$ of them as our training set and $10\%$ as our test set. We were interested in understanding how certain characteristics of hospitals like location, number of full time equivalent employees, or number of beds, for example, affected the hospitals' total operating costs. To perform qualitative analyses, we categorized each hospital as above or below the median. 
+
+While the data is roughly annual, certain hospitals reported for different fiscal year lengths. To normalize, we divided some of our variables by the length of their cost reporting period to obtain daily estimates like average number of inpatients per day or average salary expense per day. Variables that are reported as "averages per day" are denoted with the word "average" in the predictor table below. Some hospitals were listed multiple times with distinct reporting periods. We learned that this could correspond to a change in control of the hospital. For example, the hospital could have been sold and transitioned from a voluntary to a governmental hospital. Duplicate hospitals were left in the dataset and a dummy variable, `duplicate` was added to indicate its status.  
+
+There were $13$ different categories of control ranging from "Voluntary Non-Profit-Church" to "Governmental-Federal". To reduce our number of categories, we re-binned this variable to only include the broad categories: "Voluntary", "Proprietary", and "Governmental". We followed a similar procedure for the $12$ different categories of provider type ranging from "Children" to "Cancer" to "General Long Term". In this case, we re-binned provider type to only distinguish between "General" and "Specialized" care. We classified "General Short Term", "General Long Term", and "Religious Non-Medical Health Care Institution" as "General" care and classified "Cancer", "Psychiatric", "Rehabilitation",
+"Children", "Reserved for Future Use", "Other", "Extended Neoplastic Disease Care", "Indian Health Services", and "Rural Emergency Hospital" as "Specialized" care. 
+
+To improve accuracy on methods like Lasso regression, we scaled our numerical variables using the `scale()` function which centered and scaled our data appropriately. The following table includes the ranges of the predictors and response before they were re-scaled. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+library(knitr)
+library(tidyverse)
+library(kableExtra)
+```
+
+\renewcommand{\arraystretch}{2}
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+Variables = c("Number of Beds","FTE employees on payroll","Total hospital days",
+                   "Total discharges","Total income","Total assets","Salaries","Inpatients",
+                   "Rural versus Urban","Type of control","Type of provider","Duplicate hospital","Total costs","Costs bin")
+
+
+Range = c("[1-2,791]","[0.05-26,941.09]",
+          "[1-772,819]","[0.0027-462.63]","[-$6,129,919, $11,516,626]",
+           "[-$636,856,458, $29,465,487,958] ","[$128.51, $9,032,294.85]","[0.0033-2123.13]",
+           "[2487 rural, 3225 urban]","[2927 voluntary, 1728 proprietary, 1057 governmental]",
+           "[4779 general, 993 specialized]","[132 duplicates, 5580 non duplicates ]","[$2,718.28, $16,000,980.58]","[2856 above median, 2856 below median]")
+
+Descriptions = c("Total number of available beds including adult beds, pediatric beds, birthing room, and newborn ICU beds",
+                 "Average number of full time-equivalent employees",
+                 "Total number of inpatient days (i.e. days all patients spent in the hospital)",
+                 "Average number of discharges including deaths",
+                 "Average income including net revenue from services given to patients",
+                 "Total current assets",
+                 "Average salary expenses",
+                 "Average number of inpatients",
+                 "Location of hospital defined as rural or urban",
+                 "Type of control under which hospital is conducted",
+                 "Type of services provided",
+                 "Whether or not hospital was listed multiple times",
+                 "Total hospital costs",
+                 "Whether or not total hospital costs was above/below median")
+
+summary = tibble("Variables" = Variables,"Pre-scaled Range" = Range,
+                 "Descriptions" = Descriptions)
+
+summary %>%
+  kable(linesep = "") %>%
+  kable_styling(latex_options = c("striped")) %>% 
+  column_spec(1,width="4cm") %>%
+  column_spec(2,width ="4cm") %>%
+  column_spec(3,width="8cm")  %>%
+  pack_rows("Predictors",1,12) %>%
+  pack_rows("Response",13,14)
+```
+
+
+```{r, include=FALSE}
+# Rose's section 
+rm(list=ls())
+knitr::opts_chunk$set(echo = FALSE, include = FALSE, warning = FALSE,
+                      message = FALSE)
+library(tidyverse)
+library(caret)
+library(class)
+library(glmnet)
+library(naivebayes)
+library(leaps)
+library(pls)
+library(tree)
+library(randomForest)
+library(gbm)
+library(keras)
+library(faux)
+library(jtools)
+```
+
+
+```{r}
+hpc <- read_csv(here::here("hpc.csv"))
+# summary(hpc)
+
+hpcdf <- hpc |>
+  mutate(
+    start = as.Date(`Fiscal Year Begin Date`), end = as.Date(`Fiscal Year End Date`)
+  ) |>
+  mutate(days = as.numeric(end - start)) |>
+  mutate(numBeds = `Total Bed Days Available` / days, id = row_number())
+```
+
+```{r}
+hpc_clean <- hpcdf |>
+  janitor::clean_names() |>
+  select(provider_ccn, days, number_of_beds,
+    total_costs, rural_versus_urban, provider_type, type_of_control,
+    fte_employees_on_payroll,
+    total_days = total_days_v_xviii_xix_unknown,
+    total_discharges = total_discharges_v_xviii_xix_unknown,
+    total_income, total_assets,
+    salaries = total_salaries_from_worksheet_a
+  ) |>
+  na.omit() |>
+  mutate(
+    rural = ifelse(rural_versus_urban == "R", 1, 0),
+    control_bin = case_when(
+      type_of_control < 3 ~ "Voluntary",
+      (type_of_control >= 3 & type_of_control < 7) ~ "Proprietary",
+      type_of_control >= 7 ~ "Governmental"
+    ),
+    provider_bin = ifelse(provider_type < 3 |
+      provider_type == 6,
+    "General", "Specialized"
+    ),
+  ) |>
+  select(-c(rural_versus_urban, type_of_control, provider_type))
+
+duplicates <- hpc_clean |>
+  group_by(provider_ccn) |>
+  summarise(count = n()) |>
+  filter(count > 1)
+
+dup <- map_lgl(hpc_clean$provider_ccn, `%in%`, duplicates$provider_ccn)
+
+hpc_clean$duplicate <- as.numeric(dup)
+
+hpc_normalize <- hpc_clean |>
+  mutate(
+    total_costs = total_costs / days,
+    inpatients = total_days / days,
+    total_discharges = total_discharges / days,
+    total_income = total_income / days,
+    salaries = salaries / days
+  )
+```
+
+```{r}
+hpc_dummies <- hpc_normalize |>
+  select(-c(provider_ccn, days)) |>
+  mutate(
+    costs_bin = ifelse(total_costs > median(total_costs), 1, 0)
+  ) |>
+  tidytable::get_dummies() |>
+  select(-c(control_bin_Voluntary, provider_bin_General)) |> 
+  select(where(is.numeric))
+```
+
+```{r}
+quant_scaled <- hpc_dummies |>
+  select(-c(
+    control_bin_Governmental, control_bin_Proprietary,
+    provider_bin_Specialized, rural, costs_bin, duplicate
+  )) |>
+  scale()
+
+qual <- hpc_dummies |>
+  select(c(
+    control_bin_Governmental, control_bin_Proprietary,
+    provider_bin_Specialized, rural, costs_bin, duplicate
+  ))
+
+hpc_scaled <- cbind(quant_scaled, qual)
+```
+
+
+```{r}
+set.seed(1)
+
+train_prop <- 0.9
+
+n <- nrow(hpc_scaled)
+n_train <- train_prop * n
+n_test <- n - n_train
+
+hpc_scaled$set <- "Train"
+hpc_scaled$set[sample(n, n_test, replace = FALSE)] <- "Test"
+
+df_train <- hpc_scaled |>
+  filter(set == "Train") |>
+  select(-set)
+
+df_test <- hpc_scaled |>
+  filter(set == "Test") |>
+  select(-set)
+```
+
+
+# Exploratory Data Analysis
+
+In order to get a visual sense of the relationships in the data, we created a few exploratory plots.
+
+The plot below displays the distribution of (scaled) total costs, where the red line represents the median and the blue line represents the mean. We can see that the distribution of total costs is very right-skewed. For this reason, we chose to define our binary response based on whether or not total costs was above the median, not the mean.
+
+```{r, include = TRUE}
+ggplot(hpc_scaled, aes(x = total_costs)) +
+  geom_histogram() +
+  geom_vline(xintercept = median(hpc_scaled$total_costs), color = "red") + 
+  geom_vline(xintercept = mean(hpc_scaled$total_costs), color = "blue")
+```
+
+The pairs plots below visualize the relationships between all variables in the data (using the scaled data). We separated the data into two pairs plots, one including only numeric predictors and one including only categorical predictors, in order to see the relationships more clearly.
+  
+
+```{r, include = TRUE}
+quant_plot <- hpc_scaled |> 
+  select(-c(
+    control_bin_Governmental, control_bin_Proprietary,
+    provider_bin_Specialized, rural, duplicate,
+    set
+  ))
+
+pairs(quant_plot)
+```
+
+In the plot above visualizing the relationships between all numeric predictors and the response, we find that total costs appears to have fairly strong positive linear relationships with the following predictors: employees on payroll, total days, bed days, total discharges, and salaries. Total costs appears to have weak or no relationship with total income and total assets. For the binary response, the predictors which have positive relationships with total cost have a pattern such that binary costs = 0 corresponds to a higher concentration of points with low values of the predictor, and binary costs = 1 corresponds to a wider range of values for the predictor. This same pattern shows up also for total assets and total income, which did not look associated with continuous total cost.
+
+Further, we find very high pairwise positive collinearity between (1) total days, bed days, and total discharges, and (2) salaries and employees on payroll.
+
+Interestingly, despite total costs being so skewed, the relationships between each predictor and the response look very linear, and none of them appear non-linear.
+
+```{r, include = TRUE}
+qual_plot <- hpc_scaled |> 
+  select(
+    control_bin_Governmental, control_bin_Proprietary,
+    provider_bin_Specialized, rural, costs_bin, duplicate, total_costs
+    )
+
+pairs(qual_plot)
+```
+
+Looking at the categorical predictors above, it is less obvious to see relationships between the predictors and response, but there does appear to be some relationship between duplicate and total costs as well as between proprietary control and total costs. For each of these relationships, it seems that when the predictor value equals zero, the total costs are low, while when the predictor value equals one, there is more. of a range of total costs values. However, it is hard to tell if this is a true relationship or if it simply results from unequal numbers of observations in each predictor category. Most total costs values are small, so if there are a smaller number of data points in one category, it would be likely that most of those have small total costs values, while if there are more points in a category, it would look like a wider range.
+
+Focusing on the plot of total costs against binary cost (the two response variables), we notice that all total costs values below the median are very small, while those above the median have a much wider range of values. This reflects the skewness of total costs visualized above. 
+
+# Quantitative Outcome Analyses
+
+
+```{r}
+predictors <- select(df_train, -c(total_costs, costs_bin))
+```
+
+
+
+```{r}
+n_train <- nrow(df_train)
+
+k <- 10
+k.o <- k
+kvals <- unique(round(n_train / (1L:floor(n_train / 2))))
+temp <- abs(kvals - k)
+if (!any(temp == 0)) {
+  k <- kvals[temp == min(temp)][1L]
+}
+f <- ceiling(n_train / k)
+
+df_train$fold <- sample(rep(1L:k, f), n_train)
+```
+
+
+
+```{r}
+train_data <- df_train |> select(-c(costs_bin))
+
+test_data <- df_test |> select(-c(costs_bin))
+```
+
+
+## Marginal simple linear regressions
+
+
+### Assumptions
+
+Linear Regression analysis has four key assumptions:
+
+1. Linear Relationship between predictor and response
+
+2. Independence of Errors
+
+3. Constant Variance
+
+4. Errors are normally distributed
+
+In order to assess these assumptions, we created pairwise scatterplots between the response (total costs) and each predictor. We see from the scatterplots that the relationship between the response and each numeric predictor appears approximately linear, and there are no obvious violations of non-constant variance. A histogram of total costs shows that the response variable is notably right-skewed, indicating possible concern that the errors may be non-normal. However, the linear relationships between each predictor and the response indicate that linear regression is a suitable model. We tried log-transforming total costs to better meet the normality of errors assumption, but we found that this transformation made the relationships between each predictor and the response notably non-linear, indicating that this transformation is not useful to improve the fit of the data to the model assumptions. 
+
+For independence of errors, it is relatively reasonable to assume that the total costs of one hospital would not impact those of another hospital, so this assumption is reasonably met. There could be small violations if, for example, two hospitals are in close proximity and one has more capacity than the other. In this scenario the one with lower capacity may redirect patients to the higer capacity one, making the costs decrease for the smaller one and increase for the larger one. 
+
+```{r}
+# model summaries
+summaries <- map(predictors, ~ summary(lm(total_costs ~ .x, data = df_train)))
+
+simple_models <- map(predictors, ~ lm(total_costs ~ .x, data = df_train))
+```
+
+
+
+```{r}
+# Estimate with k-fold:
+
+predictor_names <- colnames(predictors)
+
+formulas <- str_c("total_costs", " ~ ", predictor_names)
+
+
+compute_MSEP_lm <- function(train_data, formula, i) {
+  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
+  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
+
+  mod <- lm(formula, data = current_train_folds)
+  pred <- predict(mod, newdata = select(current_test_fold, -c(total_costs)))
+
+  MSEP <- mean((current_test_fold$total_costs - pred)^2)
+  return(MSEP)
+}
+
+
+kfold_cv_lm <- function(train_data, formula, k = 10) {
+  MSEP_vec <- map_dbl(1:k, ~ compute_MSEP_lm(train_data, formula, .x))
+  avg_MSEP <- mean(MSEP_vec)
+  return(avg_MSEP)
+}
+
+test_error_vec <- map_dbl(formulas, ~ kfold_cv_lm(df_train, formula = .x, k = 10))
+
+test_error_vec
+```
+
+
+
+```{r}
+compute_MSEP_test <- function(formula, train_data, test_data) {
+  train_data <- train_data |> select(-fold)
+
+  mod <- lm(formula, data = train_data)
+  pred <- predict(mod, newdata = select(test_data, -c(total_costs)))
+
+  MSEP <- mean((test_data$total_costs - pred)^2)
+  return(MSEP)
+}
+
+test_MSEP_vec <- map_dbl(formulas, ~ compute_MSEP_test(.x, df_train, df_test))
+test_MSEP_vec
+```
+
+```{r}
+method <- str_c("Marginal LR", " ", predictor_names)
+```
+
+```{r}
+coef_ests <- map_dbl(simple_models, ~coef(.x)[[2]])
+
+p_values <- map_dbl(summaries, ~`$`(.x, coefficients)[2,4])
+```
+
+
+### Results
+
+The results of the simple linear regression models are summarized in the table below. The first column of the table represents the estimated Mean Squared Error of Prediction (MSEP) by cross validation. The second column represents the MSEP for the held-out test set. The third column represents the coefficient estimate for the predictor. The fourth column represents the p-value associated with the t-test for whether or not each coefficient estimate is equal to zero. 
+
+
+```{r, include = TRUE,fig.height=4}
+summary_table_simple <- tibble(
+  method = method,
+  cv_error = test_error_vec,
+  test_error = test_MSEP_vec,
+  coef_est = coef_ests,
+  p_value = p_values
+) |> 
+  mutate_if(is.numeric, ~ round(.x, 3))
+
+knitr::kable(summary_table_simple)
+```
+
+We notice that almost all of the p-values equal zero, indicating strong evidence that each predictor is truly associated with the response, total costs. The indicator variable for Government control (`control_bin_Governmental`) has a large p-value, but the indicator variable for Proprietary control (`control_bin_Proprietary`) has a small p-value, indicating evidence that in general, the type of control is truly associated with total costs. The only other predictor with a large p-value is duplicate. This indicates that we do not have evidence that change of ownership of a hospital during the fiscal year is related to the total costs of the hospital.
+
+Looking at the cross validation (CV) and test errors, we see that they are smallest for the models including number of beds, number of employees, total days, salaries, and inpatients. This indicates that these predictors are more strongly associated with the response than the others.
+
+## Multiple linear regression
+
+### Assumptions
+
+The assumptions for multiple linear regression are the same as those for simple linear regression outlined in the previous section.
+
+### Results
+
+The results for the main effects multiple linear regression model are summarized below.
+
+
+```{r}
+formula <- as.formula("total_costs ~ .")
+
+mod_mlr <- lm(formula, data = select(train_data, -fold))
+
+summary(mod_mlr)
+```
+
+```{r}
+cv_error_lm <- kfold_cv_lm(train_data, formula)
+
+cv_error_lm
+```
+
+```{r}
+test_error_lm <- compute_MSEP_test(formula, train_data, df_test)
+
+test_error_lm
+```
+
+```{r, include = TRUE}
+jtools::summ(mod_mlr)
+```
+
+The adjusted $R^2$ value of 0.94 indicates that 94 percent of the variability in total costs can be explained by the predictors. This $R^2$ value is quite high. The estimate of the test MSEP using CV is 0.071, and the test MSEP based on the held-out set is 0.106. These error rates are lower than any of the individual marginal linear regression error rates, indicating that when we include all predictors in one model, we can predict total costs more accurately than if we only include one predictor. 
+
+Looking at the coefficient estimates and p-values in the table below, we see that most predictors still have very small p-values, but some which were significant in the marginal linear regressions become insignificant in the multiple linear regression. Specifically, total days, number of beds, and total discharges have large p-values in the multiple regression when all three had very small p-values in the marginal models. This indicates that there is likely correlations between the predictors such that once we have already accounted for some of them, others do not add much further information. This is consistent with the pairs plot which shows strong linear relationships between several pairs of predictors. 
+
+
+## Multiple linear regression with interactions and transformations: 
+
+Based on our exploratory data analysis, there were no obvious transformations or interactions which were needed in order to satisfy the linear regression assumptions. However, we added a few transformations and interactions for experimentation purposes. For transformations, we added a quadratic term for salaries and total days. For interactions, we added one interaction between number of employees and total income as well as between number of employees and provider type. 
+
+### Assumptions
+
+The assumptions for multiple linear regression are the same as those for simple linear regression outlined in the previous section.
+
+
+### Results
+
+The results for the multiple linear regression model with interactions and transformations are summarized below.
+
+
+```{r}
+formula <-
+  as.formula("total_costs ~ . - total_days - salaries + poly(total_days, 2, raw = TRUE) + poly(salaries, 2, raw = TRUE) + fte_employees_on_payroll*total_income + fte_employees_on_payroll*provider_bin_Specialized")
+
+mod_mlr <- lm(formula, data = select(train_data, -fold))
+
+summary(mod_mlr)
+
+cv_error_lm2 <- kfold_cv_lm(train_data, formula)
+
+cv_error_lm2
+
+test_error_lm2 <- compute_MSEP_test(formula, train_data, df_test)
+
+test_error_lm2
+```
+
+```{r, include = TRUE}
+jtools::summ(mod_mlr)
+```
+
+The adjusted $R^2$ value of 0.94 indicates that this model with transformations and interactions explains about the same proportion of variablity in total costs as the main effects model. One interesting finding, however, is that the p-value for the quadratic term for total days has a significant p-value despite the main-effect for total days not being significant.
+
+
+The estimate of the test MSEP using CV is 0.114, and the test MSEP based on the held-out set is 0.081. These error values are very similar to those for the main effects model.
+
+
+## Regression Tree (with pruning)
+
+### Assumptions
+
+For the regression tree, the only assumption we are making is that the response is continuous. There are no parametric assumptions.
+
+### Results
+
+A plot of the pruned regression tree is displayed below. The optimal pruning size was found to be 9 via cross validation. 
+
+```{r}
+formula <- as.formula("total_costs ~ .")
+tree_train <- tree(
+  formula,
+  select(train_data, -fold)
+)
+
+# pruning -- find best size with cv
+set.seed(1)
+cv_tree <- cv.tree(tree_train)
+cv_tree$size[which(cv_tree$dev == min(cv_tree$dev))]
+
+# refit tree with pruning
+
+tree_pruned <- prune.tree(tree_train, best = 9)
+
+pred <- predict(tree_pruned, newdata = test_data)
+
+test_error_regtree <- mean((test_data$total_costs - pred)^2)
+
+test_error_regtree
+```
+
+We see that almost all splits in the tree are made based on the salaries predictor, indicating that salaries is the most important predictor. There are only two other predictors included in the tree, which are number of employees and total income.
+
+
+```{r}
+compute_MSEP_regtree <- function(train_data, formula, i) {
+  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
+  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
+
+  tree_train <- tree(
+    formula,
+    current_train_folds,
+  )
+
+  tree_pruned <- prune.tree(tree_train, best = 9)
+
+  pred <- predict(tree_pruned, newdata = current_test_fold)
+
+  MSEP <- mean((current_test_fold$total_costs - pred)^2)
+  return(MSEP)
+}
+
+
+kfold_cv_regtree <- function(train_data, formula, k = 10) {
+  MSEP_vec <- map_dbl(1:k, ~ compute_MSEP_regtree(train_data, formula, .x))
+  avg_MSEP <- mean(MSEP_vec)
+  return(avg_MSEP)
+}
+
+cv_error_regtree <- kfold_cv_regtree(train_data, formula)
+cv_error_regtree
+```
+
+```{r, include = TRUE}
+plot(tree_pruned)
+text(tree_pruned, cex = 0.6)
+```
+
+
+The estimate of the test MSEP using CV is 0.144, and the test MSEP based on the held-out set is 0.100. These error values are very similar to those for the multiple linear regression models.
+
+
+## Bagging
+
+### Assumptions
+
+Bagging involves taking averages across multiple regression trees, so there are no additional assumptions.
+
+### Results
+
+The variable importance metrics for bagging are summarized in the table below. The Mean MSE Increase refers to the average percent increase in MSE when the predictor is excluded. This is computed by permuting the out-of-bag portion of the data. The Node Purity refers to the increase in node purity accounted for by the predictor. For both of these importance measures, a larger value indicates higher importance.
+
+```{r}
+n_trees <- 300
+p <- ncol(train_data) - 2
+
+# Bagging
+set.seed(1)
+bag_train <-
+  randomForest(
+    formula,
+    data = select(train_data, -fold),
+    ntree = n_trees,
+    mtry = p, # m = p for bagging.
+    keep.forest = TRUE, # not necessary, using to compute test errors for all trees.
+    importance = TRUE # not necessary, compute importance of variables.
+  )
+
+# Test errors:
+bag_pred <- predict(bag_train, test_data, predict.all = TRUE)
+
+bag_pred_avg <- map_dbl(
+  1:nrow(test_data),
+  ~ mean(bag_pred$individual[.x, ])
+)
+
+test_error_bag <- mean((bag_pred_avg - test_data$total_costs)^2)
+
+test_error_bag
+```
+
+```{r, include = TRUE}
+table <- importance(bag_train) |> 
+  as.data.frame() |> 
+  rename(`Mean MSE Increase` = `%IncMSE`,
+         `Node Purity Increase` = IncNodePurity
+         )
+
+knitr::kable(table)
+```
+
+We see that salaries by far has the highest node purity increase and also has the highest mean increase in MSE when the variable is removed. The second most important variable seems to be number of employees. These results are consistent with the plot of the single regression tree, and they indicate that much of the variability in hospital costs can be accounted for by the money spent on paying employees.
+
+The estimate of the test MSEP using CV is 0.071, and the test MSEP based on the held-out set is 0.125. These error values are very similar to those for the multiple linear regression models and the single regression tree.
+
+
+```{r}
+compute_MSEP_bag <- function(train_data, formula, i) {
+  set.seed(i)
+
+  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
+  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
+
+  n_trees <- 300
+  p <- ncol(current_train_folds) - 1
+
+  bag_train <-
+    randomForest(
+      formula,
+      data = current_train_folds,
+      ntree = n_trees,
+      mtry = p, # m = p for bagging.
+      keep.forest = TRUE, # not necessary, using to compute test errors for all trees.
+      importance = TRUE # not necessary, compute importance of variables.
+    )
+
+  bag_pred <- predict(bag_train, current_test_fold, predict.all = TRUE)
+
+  bag_pred_avg <- map_dbl(
+    1:nrow(current_test_fold),
+    ~ mean(bag_pred$individual[.x, ])
+  )
+
+  MSEP <- mean((current_test_fold$total_costs - bag_pred_avg)^2)
+  return(MSEP)
+}
+
+
+kfold_cv_bag <- function(train_data, formula, k = 10) {
+  MSEP_vec <- map_dbl(1:k, ~ compute_MSEP_bag(train_data, formula, .x))
+  avg_MSEP <- mean(MSEP_vec)
+  return(avg_MSEP)
+}
+
+#cv_error_bag <- kfold_cv_bag(train_data, formula)
+cv_error_bag <- 0.07086356
+```
+
+## Random Forest 
+
+### Assumptions
+
+Random Forest involves taking averages across multiple regression trees, so there are no additional assumptions.
+
+### Results
+
+The variable importance metrics for random forest are summarized in the table below. Their interpretation is the same as for bagging.
+
+```{r}
+compute_error_rf <- function(train_data, formula, i) {
+  set.seed(i)
+
+  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
+  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
+
+  n_trees <- 300
+
+  rf_train <-
+    randomForest(
+      formula,
+      data = current_train_folds,
+      ntree = n_trees,
+      keep.forest = TRUE, # not necessary, using to compute test errors for all trees.
+      importance = TRUE # not necessary, compute importance of variables.
+    )
+
+  rf_pred <- predict(rf_train, current_test_fold, predict.all = TRUE)
+
+  rf_pred_avg <- map_dbl(
+    1:nrow(current_test_fold),
+    ~ mean(rf_pred$individual[.x, ])
+  )
+
+  MSEP <- mean((current_test_fold$total_costs - rf_pred_avg)^2)
+  return(MSEP)
+}
+
+
+kfold_cv_rf <- function(train_data, formula, k = 10) {
+  error_vec <- map_dbl(1:k, ~ compute_error_rf(train_data, formula, .x))
+  avg_error <- mean(error_vec)
+  return(avg_error)
+}
+
+# cv_error_rf <- kfold_cv_rf(train_data, formula)
+cv_error_rf <- 0.07117585
+```
+
+```{r}
+set.seed(1)
+rf_train <-
+  randomForest(
+    formula,
+    data = select(train_data, -fold),
+    ntree = n_trees,
+    keep.forest = TRUE, # not necessary, using to compute test errors for all trees.
+    importance = TRUE # not necessary, compute importance of variables.
+  )
+
+# Test errors:
+rf_pred <- predict(rf_train, test_data, predict.all = TRUE)
+
+rf_pred_avg <- map_dbl(
+  1:nrow(test_data),
+  ~ mean(rf_pred$individual[.x, ])
+)
+
+test_error_rf <- mean((rf_pred_avg - test_data$total_costs)^2)
+
+test_error_rf
+```
+
+```{r, include = TRUE}
+table <- importance(rf_train) |> 
+  as.data.frame() |> 
+  rename(`Mean MSE Increase` = `%IncMSE`,
+         `Node Purity Increase` = IncNodePurity
+         )
+
+knitr::kable(table)
+```
+
+
+We see that the ordering of variable importance is similar to that for bagging, with salaries and number of employees being the top two most important. 
+
+The estimate of the test MSEP using CV is 0.071, and the test MSEP based on the held-out set is 0.053. These error values are a little lower than those for the previous methods.
+
+## Boosting 
+
+### Assumptions
+
+Boosting involves manipulating and combining multiple regression trees, so there are no additional assumptions.
+
+### Results
+
+The tuning parameter was chosen to be 0.1 by cross validation.
+
+The relative influence of each predictor is summarized in the table below. The relative influence for boosting is similar to variable importance for bagging and random forest, but the method for computing it is slightly different. For boosting, the relative influence is computed as follows: for each split in the tree, compute the decrease in MSE. Then, average the improvement for each variable across all trees where that variable is included. A higher relative influence corresponds to a larger average decrease in MSE. A main difference in the computation compared to the Mean MSE Decrease from bagging and random forest is that for boosting, we are computing the mean decrease based on the entire training set, not only the out of bag portions. There is another method for computing importance which uses out of bag samples only, but the method described above is more widely used, so we chose that one.
+
+
+```{r}
+compute_error_boost <- function(train_data, formula, lambda, i) {
+  set.seed(i)
+
+  current_train_folds <- filter(train_data, fold != i) |> select(-fold)
+  current_test_fold <- filter(train_data, fold == i) |> select(-fold)
+
+  n_trees <- 300
+  d1 <- 1
+
+  boost_train <-
+    gbm(
+      formula,
+      data = current_train_folds,
+      n.trees = n_trees,
+      interaction.depth = d1,
+      shrinkage = lambda
+    )
+
+  boost_pred <- predict(boost_train, current_test_fold, n.trees = n_trees)
+
+  MSEP <- mean((current_test_fold$total_costs - boost_pred)^2)
+  return(MSEP)
+}
+
+
+kfold_cv_boost <- function(train_data, formula, lambda, k = 10) {
+  error_vec <- map_dbl(1:k, ~ compute_error_boost(train_data, formula, lambda, .x))
+  avg_error <- mean(error_vec)
+  return(avg_error)
+}
+
+lambda_grid <- seq(0, 3, by = 0.1)
+
+#cv_error_rates <- map_dbl(lambda_grid, ~kfold_cv_boost(train_data, formula, .x, k = 10))
+
+#optimal_lambda <- lambda_grid[which(cv_error_rates == min(cv_error_rates))]
+
+optimal_lambda <- 0.1
+
+#cv_error_rate_optimal_lambda <- min(cv_error_rates)
+#cv_error_rate_optimal_lambda
+
+cv_error_rate_optimal_lambda <- 0.09249563
+
+cv_error_boost <- cv_error_rate_optimal_lambda
+```
+
+
+```{r}
+d1 <- 1
+
+boost_train <-
+  gbm(
+    formula,
+    data = select(train_data, -fold),
+    n.trees = n_trees,
+    interaction.depth = d1,
+    shrinkage = optimal_lambda
+  )
+
+# Test errors:
+boost_pred <- predict(boost_train, test_data, n.trees = n_trees)
+
+test_error_boost <- mean((boost_pred - test_data$total_costs)^2)
+
+test_error_boost
+```
+
+```{r, include = TRUE}
+table <- summary.gbm(boost_train, plotit = FALSE)[-1] |> 
+  rename(`Relative Influence` = rel.inf)
+
+knitr::kable(table)
+```
+
+We see that salaries and number of employees have the highest influence by far compared to the others, consistent with the importance metrics from the previous methods.
+
+The estimate of the test MSEP using CV is 0.092, and the test MSEP based on the held-out set is 0.079. These error values are on the lower side compared to the previous methods, but not as low as for random forest.
+
+## Neural Network
+
+### Assumptions
+
+The only assumption for the neural network is that the response is continuous. There are no parametric assumptions.
+
+### Results
+
+We created a neural network with four hidden layers and one output layer. Out of the five total layers,  three are dense layers and two are dropout layers. For the two hidden dense layers, we used relu activation functions. For the two hidden dropout layers, we used dropout rate 0.4 and 0.3 respectively. The output layer uses a linear activation function because our response is continuous. We structured the network as alternating dense layers and dropout layers to help prevent over-fitting. 
+
+The estimate of the test MSEP using CV is 0.072, and the test MSEP based on the held-out set is 0.088. These error values are on the lower side compared to the previous methods, but not as low as for random forest.
+
+
+```{r}
+cv_error_nn <- 0.0721646
+
+test_error_nn <- 0.08771483
+```
+
+
+# Summary Table Quantitative Outcome
+
+The below table summarises the error rates for all methods applied to the quantitative response, including all predictors.
+
+```{r, include = TRUE}
+method <- c(
+  "Linear Regression (Main Effects)", "Linear Regression (Transformations)",
+  "Regression Tree", "Bagging", "Random Forest", "Boosting", "Neural Network"
+)
+
+cv_error <- c(
+  cv_error_lm, cv_error_lm2, 
+  cv_error_regtree, cv_error_bag, cv_error_rf, cv_error_boost,
+  cv_error_nn
+)
+
+test_error <- c(
+  test_error_lm, test_error_lm2, test_error_regtree, 
+  test_error_bag, test_error_rf, test_error_boost,
+  test_error_nn
+)
+
+error_summary <- summary_table_simple |> 
+  select(method, cv_error, test_error) |> 
+  bind_rows( tibble(method, cv_error, test_error) ) |> 
+  mutate_if(is.numeric, ~ round(.x, 3))
+
+knitr::kable(error_summary)
+```
+
+We note that the random forest method has the lowest MSEP.
+
+
+```{r,echo = FALSE,warning = FALSE, message = FALSE}
+rm(list=ls())
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE,include = TRUE,message = FALSE)
+
+
+library(tidyverse)
+hpc = read_csv(here::here("hpc.csv"))
+#summary(hpc)
+
+hpcdf = hpc |> 
+  mutate(start = as.Date(`Fiscal Year Begin Date`),end = as.Date(`Fiscal Year End Date`)) |> 
+  mutate(days = as.numeric(end - start)) |> 
+  mutate(numBeds = `Total Bed Days Available`/days,id = row_number())
+```
+
+```{r echo=FALSE}
+hpc_clean <- hpcdf |>
+  janitor::clean_names() |>
+  select(provider_ccn, days, number_of_beds,
+    total_costs, rural_versus_urban, provider_type, type_of_control,
+    fte_employees_on_payroll,
+    total_days = total_days_v_xviii_xix_unknown,
+    total_discharges = total_discharges_v_xviii_xix_unknown,
+    total_income, total_assets,
+    salaries = total_salaries_from_worksheet_a
+  ) |>
+  na.omit() |>
+  mutate(
+    rural = ifelse(rural_versus_urban == "R", 1, 0),
+    control_bin = case_when(
+      type_of_control < 3 ~ "Voluntary",
+      (type_of_control >= 3 & type_of_control < 7) ~ "Proprietary",
+      type_of_control >= 7 ~ "Governmental"
+    ),
+    provider_bin = ifelse(provider_type < 3 |
+      provider_type == 6,
+    "General", "Specialized"
+    ),
+  ) |>
+  select(-c(rural_versus_urban, type_of_control, provider_type))
+
+duplicates <- hpc_clean |>
+  group_by(provider_ccn) |>
+  summarise(count = n()) |>
+  filter(count > 1)
+
+dup <- map_lgl(hpc_clean$provider_ccn, `%in%`, duplicates$provider_ccn)
+
+hpc_clean$duplicate <- as.numeric(dup)
+
+hpc_normalize <- hpc_clean |>
+  mutate(
+    total_costs = total_costs / days,
+    inpatients = total_days / days,
+    total_discharges = total_discharges / days,
+    total_income = total_income / days,
+    salaries = salaries / days
+  )
+```
+
+```{r echo=FALSE}
+hpc_dummies = hpc_normalize |> 
+  select(-c(provider_ccn, days)) |> 
+  mutate(
+    costs_bin = ifelse(total_costs > median(total_costs), 1, 0)
+    ) |> 
+  tidytable::get_dummies(drop_first = TRUE) |> 
+  select(where(is.numeric))
+```
+
+```{r echo=FALSE}
+set.seed(1)
+
+train_prop = 0.9
+
+n = nrow(hpc_dummies)
+n_train = train_prop*n
+n_test = n - n_train
+
+hpc_dummies$set = "Train"
+hpc_dummies$set[sample(n, n_test, replace = FALSE)] = "Test"
+```
+
+```{r echo=FALSE}
+set.seed(1)
+folds = floor(seq(1,11, length.out=nrow(hpc_dummies)+1))[1:nrow(hpc_dummies)]
+folds = sample(folds, length(folds))
+
+hpc_dummies$fold = folds
+```
+
+```{r echo=FALSE}
+hpc_quant = hpc_dummies |> select(-c(provider_bin_Specialized, control_bin_Governmental, control_bin_Voluntary, costs_bin, rural, set, fold))
+
+hpc_qual = hpc_dummies |> select(c(provider_bin_Specialized, control_bin_Governmental, control_bin_Voluntary, costs_bin, rural, set, fold))
+
+hpc_scaled = as_tibble(scale(hpc_quant) |> cbind(hpc_qual))
+
+df_train = hpc_scaled |>  filter(set == "Train") |> select(-c(set, fold))
+df_test = hpc_scaled |> filter(set == "Test") |> select(-c(set, fold))
+```
+
+# Variable Selection Analyses
+
+## Best Subset
+
+### Results
+In the plots below, we can see what variables are selected depending on what criterion we wish to use ($R^2$, adjusted $R^2$,etc.) for the full dataset. For the last plot, we run 10-fold CV to find the best model size to minimize the test MSE averaged across the folds. As we can see, we gain a significant reduction in the MSE from adding a non-intercept term, however, after that, the gains from additional variables in the model are comparatively quite small. Based on the 10-fold CV, we choose a model with 8 variables.
+
+```{r, echo=FALSE,fig.height=4.4}
+library(leaps)
+
+X = hpc_scaled |> select(-c(fold,set, costs_bin))
+
+erates = matrix(rep(0, 10*13), nrow = 10, ncol = 13)
+
+best_subset = regsubsets(total_costs ~ ., data = X, nvmax = ncol(X))
+
+plot(best_subset, scale="r2")
+plot(best_subset, scale="adjr2")
+plot(best_subset, scale="Cp")
+plot(best_subset, scale="bic")
+
+i=1
+for (i in 1:10) {
+  train.X = hpc_scaled |> filter(fold != i) |> select(-c(costs_bin, set, fold))
+  test.X = hpc_scaled |> filter(fold == i) |> select(-c(costs_bin, set, fold))
+  best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X))
+  summ = summary(best_subset)
+  for (j in 1:ncol(train.X)-1) {
+    selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][j,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+    temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    erates[i,j] = mean((pred - test.X$total_costs)^2)
+  }
+}
+
+erates = as_tibble(erates) |> summarize(across(V1:V13,mean))
+
+plot(1:13, erates[1,], 
+     col = ifelse(1:13 == which.min(erates), "red", "black"),
+     xlab = "Model Size",
+     ylab = "Average Test MSE")
+
+title("Best Subset Selection")
+
+data = hpc_scaled |> select(-c(fold,set,costs_bin))
+
+best_subset = regsubsets(total_costs ~ ., data = data)
+
+coeffs = as.matrix(coef(best_subset, 8))
+colnames(coeffs) = c("Coefficient Estimate")
+
+# coeffs
+
+knitr::kable(data.frame(coeffs))
+```
+
+## Forward Stepwise
+
+### Results
+We see near identical results between the exhaustive best subsets and the forward/backward stepwise methods.
+
+```{r echo=FALSE,fig.height=4.4}
+library(leaps)
+
+X = hpc_scaled
+
+best_subset = regsubsets(total_costs ~ ., data = X, nvmax = ncol(train.X))
+
+plot(best_subset, scale="r2")
+plot(best_subset, scale="adjr2")
+plot(best_subset, scale="Cp")
+plot(best_subset, scale="bic")
+
+erates = matrix(rep(0, 10*13), nrow = 10, ncol = 13)
+
+for (i in 1:10) {
+  train.X = hpc_scaled |> filter(fold != i) |> select(-c(costs_bin, set, fold))
+  test.X = hpc_scaled |> filter(fold == i) |> select(-c(costs_bin, set, fold))
+  best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X), method="forward")
+  summ = summary(best_subset)
+  for (j in 1:ncol(train.X)-1) {
+    selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][j,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+    temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    erates[i,j] = mean((pred - test.X$total_costs)^2)
+  }
+}
+
+erates = as_tibble(erates) |> summarize(across(V1:V13,mean))
+
+plot(1:13, erates[1,],
+     col = ifelse(1:13 == which.min(erates), "red", "black"),
+     xlab = "Model Size",
+     ylab = "Average Test MSE")
+
+title("Forward Stepwise Selection")
+
+data = hpc_scaled |> select(-c(fold,set,costs_bin))
+
+best_subset = regsubsets(total_costs ~ ., data = data)
+
+coeffs = as.matrix(coef(best_subset, 8))
+colnames(coeffs) = c("Coefficient Estimate")
+
+# coeffs
+
+knitr::kable(data.frame(coeffs))
+```
+
+
+## Backward Stepwise
+
+### Results 
+
+[Some text here so the plots don't push to next page]  
+
+```{r, echo=FALSE,fig.height=4.4}
+library(leaps)
+
+train.X = hpc_scaled |> filter(set == "Train") |> select(-c(costs_bin, set, fold))
+test.X = hpc_scaled |> filter(set == "Test") |> select(-c(costs_bin, set, fold))
+
+best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X))
+
+plot(best_subset, scale="r2")
+plot(best_subset, scale="adjr2")
+plot(best_subset, scale="Cp")
+plot(best_subset, scale="bic")
+
+erates = matrix(rep(0, 10*13), nrow = 10, ncol = 13)
+
+for (i in 1:10) {
+  train.X = hpc_scaled |> filter(fold != i) |> select(-c(costs_bin, set, fold))
+  test.X = hpc_scaled |> filter(fold == i) |> select(-c(costs_bin, set, fold))
+  best_subset = regsubsets(total_costs ~ ., data = train.X, nvmax = ncol(train.X), method="backward")
+  summ = summary(best_subset)
+  for (j in 1:ncol(train.X)-1) {
+    selected_vars = c("total_costs")
+    for (k in 1:ncol(train.X)-1) {
+      cond = FALSE
+      if (isTRUE(summ$which[,-1][j,k])) {cond = TRUE}
+      if (cond == TRUE) {selected_vars = append(selected_vars, colnames(summ$which)[-1][k])}
+    }
+    temp.X = train.X |> select(all_of(selected_vars))
+    lin_model = lm(total_costs ~ ., data=temp.X)
+    pred = predict(lin_model, newdata = test.X)
+    erates[i,j] = mean((pred - test.X$total_costs)^2)
+  }
+}
+
+erates = as_tibble(erates) |> summarize(across(V1:V13,mean))
+
+plot(1:13, erates[1,],
+     col = ifelse(1:12 == which.min(erates), "red", "black"),
+     xlab = "Model Size",
+     ylab = "Average Test MSE")
+
+title("Backward Stepwise Selection")
+
+data = hpc_scaled |> select(-c(fold,set,costs_bin))
+
+best_subset = regsubsets(total_costs ~ ., data = data)
+
+coeffs = as.matrix(coef(best_subset, 8))
+colnames(coeffs) = c("Coefficient Estimate")
+
+# coeffs
+
+knitr::kable(data.frame(coeffs))
+```
+
+## Ridge regression 
+
+### Results - Quantitative 
+
+```{r echo=FALSE}
+library(glmnet)
+
+set.seed(1)
+
+train.X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
+x = scale(model.matrix(total_costs ~ ., data = train.X)[ , -1])
+
+lambda_grid = 10 ^ seq(10, -2, length = 100)
+ridge_reg = cv.glmnet(x, hpc_scaled$total_costs, alpha = 0, type.measure = "mse", lambda = lambda_grid, nfolds=10)
+lambda = ridge_reg$lambda.min
+
+ridge_model = glmnet(x, hpc_scaled$total_costs,alpha = 0, lambda = lambda, nfolds=10)
+
+coeffs = coef(ridge_model)
+
+colnames(coeffs) = c("Coefficient Estimate")
+
+# coeffs
+
+rownames = row.names(coeffs)
+est = data.frame("Coefficient Estimate" = summary(coeffs)[,3])
+
+knitr::kable(as.data.frame(est,row.names = rownames))
+```
+
+### Results - Qualitative
+
+```{r echo=FALSE}
+library(glmnet)
+
+set.seed(1)
+
+train.X = hpc_scaled |> select(-c("total_costs", "set", "fold"))
+x = scale(model.matrix(costs_bin ~ ., data = train.X)[ , -1])
+
+lambda_grid = 10 ^ seq(10, -2, length = 100)
+ridge_reg = cv.glmnet(x, hpc_scaled$costs_bin, alpha = 0, family="binomial", lambda = lambda_grid, nfolds=10)
+lambda = ridge_reg$lambda.min
+
+ridge_model = glmnet(x, hpc_scaled$costs_bin,alpha = 0, lambda = lambda, nfolds=10)
+
+coeffs = coef(ridge_model)
+
+colnames(coeffs) = c("Coefficient Estimate")
+
+# coeffs
+
+rownames = row.names(coeffs)
+est = data.frame("Coefficient Estimate" = summary(coeffs)[,3])
+
+knitr::kable(as.data.frame(est,row.names = rownames))
+```
+
+## Lasso 
+
+### Results - Quantitative
+
+Below we have the Lasso selection results for predicting total costs. We can notice it selects 9 variables to have non-zero coefficients, which is close to the best model found with regsubsets.
+
+```{r echo=FALSE}
+library(glmnet)
+
+set.seed(1)
+
+train.X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
+x = scale(model.matrix(total_costs ~ ., data = train.X)[ , -1])
+
+lambda_grid = 10 ^ seq(10, -2, length = 100)
+lasso_reg = cv.glmnet(x, hpc_scaled$total_costs, alpha = 1, type.measure = "mse", lambda = lambda_grid, nfolds=10)
+
+lambda = lasso_reg$lambda.min
+
+lasso_model = glmnet(x, hpc_scaled$total_costs, alpha = 1, lambda = lambda, nfolds=10)
+
+coeffs = coef(lasso_model)
+
+colnames(coeffs) = c("Coefficient Estimate")
+
+# coeffs
+
+est = append(append(append(summary(coeffs)[,3],0,1),0,8),0,11)
+
+rownames = row.names(coeffs)
+est1 = data.frame("Coefficient Estimate" = est)
+
+knitr::kable(as.data.frame(est1,row.names = rownames))
+```
+
+### Results - Qualitative
+
+```{r echo=FALSE}
+library(glmnet)
+
+set.seed(1)
+
+train.X = hpc_scaled |> select(-c("total_costs", "set", "fold"))
+x = scale(model.matrix(costs_bin ~ ., data = train.X)[ , -1])
+
+lambda_grid = 10 ^ seq(10, -2, length = 100)
+lasso_reg = cv.glmnet(x, hpc_scaled$costs_bin, alpha = 1, family="binomial", lambda = lambda_grid, nfolds=10)
+
+lambda = lasso_reg$lambda.min
+
+lasso_model = glmnet(x, hpc_scaled$costs_bin, alpha = 1, lambda = lambda, nfolds=10)
+
+coeffs = coef(lasso_model)
+
+colnames(coeffs) = c("Coefficient Estimate")
+
+# coeffs
+
+est = append(append(append(summary(coeffs)[,3],c(0,0),2),rep(0,5),5),0,11)
+
+rownames = row.names(coeffs)
+est1 = data.frame("Coefficient Estimate" = est)
+
+knitr::kable(as.data.frame(est1,row.names = rownames))
+```
+
+## Principal Components Regression (PCR)
+
+### Results 
+The Test MSE for train-test split: 0.0944657820219513 and the average Test MSE across 10-folds: 0.0845142366389833. 
+
+```{r echo=FALSE}
+library(pls)
+
+train.X = df_train
+
+test.X = df_test
+
+pcr_model = pcr(total_costs ~ ., data = train.X)
+
+pred = predict(pcr_model, newdata = test.X)
+
+# print(paste("Test MSE for train-test split:", mean((pred - test.X$total_costs)^2)))
+
+erates = rep(0,10)
+
+for (i in 1:10) { train.X = hpc_scaled |> filter(fold != i) |> select(-c(set,fold,costs_bin))
+test.X = hpc_scaled |> filter(fold == i) |> select(-c(set,fold,costs_bin))
+
+pcr_model = pcr(total_costs ~ ., data = train.X)
+
+pred = predict(pcr_model, newdata = test.X)
+
+erates[i] = mean((pred - test.X$total_costs)^2) }
+
+# print(paste("Average Test MSE across 10-folds:", mean(erates)))
+
+```
+
+# Bootstrap SEs
+
+Our bootstrap study looks at the standard errors of the coefficient estimates found through ridge regression, with 1000 bootstrap samples. Our data is scaled, which is why our standard errors are all approximately the same magnitude.
+
+```{r echo=FALSE}
+library(boot)
+library(glmnet)
+
+X = hpc_scaled |> select(-c("costs_bin", "set", "fold"))
+
+B = 100
+
+coeffs = matrix(rep(0,B*14), nrow=B)
+
+for (i in 1:B) {
+  x = X[sample(nrow(x), nrow(x), replace = TRUE),]
+
+  x = scale(model.matrix(total_costs ~ ., data = x)[ , -1])
+
+  lambda_grid = 10 ^ seq(10, -2, length = 100)
+
+  ridge_reg = cv.glmnet(x, hpc_scaled$total_costs,
+                        alpha = 0,
+                        type.measure = "mse",
+                        lambda = lambda_grid,
+                        nfolds=10)
+
+  lambda = ridge_reg$lambda.min
+
+  ridge_model = glmnet(x, hpc_scaled$total_costs,
+                       alpha = 0,
+                       lambda = lambda,
+                       nfolds=10)
+
+  for (j in 1:14)
+ coeffs[i,j] = coef(ridge_model)[j]
+}
+
+coeffs_mean = coeffs |> as_tibble() |> summarize(across(V1:V14,mean))
+
+se = rep(0,14)
+
+for (i in 1:14) {
+  se[i] = sqrt((1/(B-1))*sum((coeffs[,1]) -coeffs_mean[i])^2)
+}
+
+se = as.matrix(se, ncol=1)
+
+row.names(se) = dimnames(coef(ridge_model))[[1]]
+colnames(se) = c("Bootstrap Standard Error Estimate")
+
+# se
+
+knitr::kable(data.frame(se))
+```
+
+
+# Qualitative Outcome Analyses
+
+For all of our qualitative outcomes, we were trying to predict whether a hospital's total costs were above or below the median. All of the methods' error rates were comparable except for LDA which had the highest misclassification rate at about $17\%$. KNN had no consistent choice of an optimal $k$ across simulations and its variability inspired our simulation study. 
+
+## KNN 
+
+### Assumptions 
+We assumed that hospitals with similar predictor values have similar total costs. 
+
+### Results 
+We used $10$ fold cross validation to first choose an optimal number of neighbors, $k$ and found $k = 7$ to be optimal with an error rate of $0.0533$ using Euclidean distance. The true error rate with $k=7$ was $0.0490$ and the true/false positive and negative rates are summarized in the table below. When plotting the cross validation error rates against the chosen $k$, we see a condensed U shape. This may suggest that large $k$ suffers from high inaccuracy but too small $k$ can lead to overfitting.
+
+\renewcommand{\arraystretch}{1}
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+library(latex2exp)
+
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.912,0.993,0.00722,0.0884)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+knn_errors = read_csv("~/hospital-costs/lindsayknupp/final_files/knn_error_rates.csv")
+
+df = cbind(knn_errors,"k" = seq(1,100))
+
+df = df %>%
+  mutate("1/K" = 1/k)
+
+ggplot(df) +
+  geom_point(aes(x=`1/K`,y=error)) + 
+  geom_point(aes(x=1/7,y=error[7]),color="red") +
+  ggtitle("Error rates using 10 fold CV") + 
+  ylab("Error rates") + 
+  xlab(TeX(r"(larger $K$ $\leftarrow \frac{1}{K} \rightarrow$ smaller $K$)"))
+
+```
+
+
+## Multiple Logistic Regression 
+
+### Assumptions 
+We assume that our predictors are not correlated with one another. 
+
+### Results 
+The coefficients and standard errors associated with our model can be found below. 
+We found that `total_discharges`, `total_assets`, `salaries`, `rural`, and `provider_bin_Specialized` were the most statistically significant. Further, most predictors increased the probability of a hospital's total costs being above the median; unsurprisingly, `salaries` stood out the most. A one unit increase in `salaries` increased the log odds of an above median classification by $50.27$. It also produced a $z$ statistic of $21.001$ providing strong evidence of an association between salaries and total costs. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+simpleglm_coef = read_csv("~/hospital-costs/lindsayknupp/final_files/simpleglm_coef.csv")
+
+simpleglm_coef = cbind(simpleglm_coef[,1],round(simpleglm_coef[,2:5],2))
+colnames(simpleglm_coef)[5] = "p-value"
+
+kable(simpleglm_coef) %>%
+  kable_styling(latex_options = "striped")
+```
+
+Our estimated and true error rates were pretty close to one another with our cross validation error of $0.073$ and true test error of $0.0333$. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.946,0.989,0.0108,0.0544)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Multiple Logistic Regression with Transformations 
+
+### Assumptions 
+We again assume that our predictors are not correlated with one another.
+
+### Results 
+We decided to transform `total_income`,`fte_employees_on_payroll`, `salaries`, and `total_days` to experiment with how less significant predictors in conjunction with `salaries` affected the response. We computed polynomial models up to degree $2$ for `total_days` and interaction terms between `total_income` & `fte_employees_on_payroll` and between `fte_employees_on_payroll` & `salaries`.
+
+With our smaller model, all of our new predictors were statistically significant with extreme $z$ statistics. However, it is important to note that the standard errors associated with each coefficient were extremely high suggesting a poor fit. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+simpleglm_coef = read_csv("~/hospital-costs/lindsayknupp/final_files/transglm_coef.csv")
+
+simpleglm_coef = cbind(simpleglm_coef[,1],round(simpleglm_coef[,2:5],2))
+colnames(simpleglm_coef)[5] = "p-value"
+
+kable(simpleglm_coef) %>%
+  kable_styling(latex_options = "striped")
+```
+
+Compared to our original multiple logistic regression, our true error rate shot up from $0.033$ to $0.158$ and our cross validation error rate shot up from $0.073$ to $0.130$. Interestingly enough though, the model perfectly predicted hospitals whose total costs were below the median with a true negative rate of $100\%$. But, it did misclassify hospitals whose total costs were above the median with a false negative rate of $30.6\%$. Overall, the transformations performed worse than our original multiple logistic model. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.694,1,0,0.306)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## LDA 
+
+### Assumptions 
+We assume that our predictors are drawn from a multivariate normal distribution and both classes share a common covariance matrix. 
+
+### Results
+As stated in the introduction, LDA performed the worst with a cross validation error rate of $0.175$ and a true error rate of $0.165$. This may suggest that our original assumption of our predictors being sampled from a multivariate normal was incorrect or that our classes do not share a common covariance matrix. Further, it is clear that a linear decision boundary is not sufficient to classify hospitals' total costs. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.762,0.913,0.0866,0.238)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+
+## QDA 
+
+### Assumptions 
+We still assume that our predictors are drawn from a multivariate normal distribution but drop the assumption that both classes share a common covariance matrix. 
+
+### Results 
+QDA did not perform much better than LDA with a cross validation error of $0.115$ and a true error rate of $0.119$. However, compared to LDA, QDA did a much better job of accurately classifying hospitals whose total costs were below the median reducing the false positive rate from $8.7\%$ to $1.4\%$. The false negative rates stayed fairly consistent hovering around $\sim 20\%$ in both methods. Overall, QDA is adequate at predicting our class labels. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.782,0.986,0.0144,0.218)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Naive Bayes with Gaussian kernel 
+
+### Assumptions 
+We assume that our predictors are not correlated with one another and are drawn from a multivariate normal distribution given the target class. 
+
+### Results 
+With a Gaussian kernel, the naive Bayes classifier was comparable to QDA. This classifier produced a cross validation error rate of $0.127$ and a true error rate of $0.137$. The misclassification rates were also extremely similar and can be summarized in the table below. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.752,0.982,0.0181,0.248)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Naive Bayes with Kernel Density Estimation
+
+### Assumptions 
+We still assume that our predictors are not correlated with one another but drop the normal distribution assumption. 
+
+### Results 
+Without assuming normality, the Bayes Classifier performs much better with a cross validation error rate of $0.073$ and a true error rate of $0.0806$. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.867,0.975,0.0253,0.133)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Decision Tree with Pruning 
+
+### Assumptions 
+We make no assumptions on the structure of the data. 
+
+### Results 
+We pruned the tree using $5$ terminal nodes which was found to be the optimal number of nodes using cross validation. The cross validation error rate was $0.051$ compared to the true error rate of $0.0595$. We also noticed that the split at the root node immediately determines how each hospital will be classified. If `salaries < -0.305`, then the hospital will be classified as having total costs below the median; otherwise, the hospital will be classified as above the median.  
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+plot(imager::load.image("~/hospital-costs/lindsayknupp/final_files/dec_tree.png"), axes = FALSE)
+
+```
+
+The false positive rate was extremely low at $1.4\%$ while the false negative rate was slightly higher at $10\%$.
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.898,0.986,0.0144,0.102)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Bagging 
+
+### Assumptions 
+We again make no assumptions on the structure of the data. 
+
+### Results 
+Bagging reduced our cross-validation error to $0.038$ compared to the decision tree, a factor of about $1.3$. Looking at the importance plot, `salaries` is the most importance variable. If it were to be removed from the tree, an average of $161$ hospitals would be misclassified, given by the mean decrease in accuracy. Further, it's mean decrease of the Gini index is $2234.21$.
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+plot(imager::load.image("~/hospital-costs/lindsayknupp/final_files/bagging_tree_imp.png"), axes = FALSE)
+
+```
+
+Bagging also had low misclassification rates with a false positive rate of $1.81\%$ and a false negative rate of $4.08\%$. 
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.959,0.982,0.0181,0.0408)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Random Forest 
+
+### Assumptions
+We again make no assumptions on the structure of the data. 
+
+### Results 
+Random Forest produced a cross validation error of $0.037$ and a true test error $0.0298$. The most important variable is `salaries` with a mean decrease in accuracy of $71.61$ and a mean decrease of the Gini index is $886.61$. 
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+plot(imager::load.image("~/hospital-costs/lindsayknupp/final_files/random_forest_imp.png"), axes = FALSE)
+```
+
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.963,0.978,0.0217,0.0374)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Boosting 
+
+### Assumptions
+We make no assumptions on the structure of the data. 
+
+### Results 
+
+## Neural Network 
+
+# Simulation Study 
+
+We were interested in understanding how our data affected the optimal choice of $k$ in the $k$ -nearest neighbors algorithm. We already experienced some variability when running our model through on different computers. Therefore, we wanted to see if more simulated datasets would produce the same variablility. 
+
+To replicate our $13$ predictors and $2$ response variables, we used a package called `faux` to simulate our numerical predictors from a multivariate normal distribution. 
+
+After $200$, simulations, the chosen $k$ ranged from $[1,90]$, almost the entire range of $k$s that we tried. The data did have a right skew and most simulations chose a $k \in [0,25]$. 
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+library(ggplot2)
+library(readr)
+library(gridExtra)
+
+results = read_csv("~/hospital-costs/lindsayknupp/final_files/sim_study_results.csv")
+
+plot1 = ggplot(results) +
+  geom_histogram(aes(x=k),bins=15) +
+  ggtitle("Optimal k over 200 datasets") +
+  xlab("k") + 
+  ylab("count")
+
+plot2 = ggplot(results) +
+  geom_point(aes(x=k,y=error)) + 
+  ggtitle("Error rates vs optimal k")
+
+
+grid.arrange(plot1,plot2,nrow=2)
+
+
+plot3 = ggplot(results) + 
+  geom_histogram(aes(x=var),bins=15)
+
+plot4 = ggplot(results) +
+  geom_point(aes(x=k,y=var)) +
+  ggtitle("Error variance vs optimal k")
+
+grid.arrange(plot3,plot4,nrow = 2)
+
+
+```
+

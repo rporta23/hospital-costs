@@ -1,5 +1,5 @@
 ---
-title: "Final Report"
+title: "reportlak"
 author: "Lindsay Knupp"
 date: "2024-05-14"
 output: pdf_document
@@ -67,6 +67,7 @@ summary %>%
   pack_rows("Predictors",1,12) %>%
   pack_rows("Response",13,14)
 ```
+
 
 # Qualitative Outcome Analyses
 
@@ -152,7 +153,7 @@ rates %>%
 ## Multiple Logistic Regression with Transformations 
 
 ### Assumptions 
-We again assume that our predictors are not correlated with one another.
+We assume that the response is Bernoulli. 
 
 ### Results 
 We decided to transform `total_income`,`fte_employees_on_payroll`, `salaries`, and `total_days` to experiment with how less significant predictors in conjunction with `salaries` affected the response. We computed polynomial models up to degree $2$ for `total_days` and interaction terms between `total_income` & `fte_employees_on_payroll` and between `fte_employees_on_payroll` & `salaries`.
@@ -281,7 +282,7 @@ plot(imager::load.image("~/hospital-costs/lindsayknupp/dec_tree.png"), axes = FA
 
 ```
 
-The false positive rate was extremely low at $1.4\%$ while the false negative rate was slightly higer at $10\%$.
+The false positive rate was extremely low at $1.4\%$ while the false negative rate was slightly higher at $10\%$.
 ```{r,warning=FALSE,message=FALSE,echo=FALSE}
 type = c("True positive", "True negative", "False positive", 
          "False negative")
@@ -328,7 +329,75 @@ rates %>%
 We again make no assumptions on the structure of the data. 
 
 ### Results 
+Random Forest produced a cross validation error of $0.037$ and a true test error $0.0298$. The most important variable is `salaries` with a mean decrease in accuracy of $71.61$ and a mean decrease of the Gini index is $886.61$. 
 
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+plot(imager::load.image("~/hospital-costs/lindsayknupp/random_forest_imp.png"), axes = FALSE)
+```
+
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.963,0.978,0.0217,0.0374)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+## Boosting 
+
+### Assumptions
+We make no assumptions on the structure of the data. 
+
+### Results 
+Through cross validation, the tuning parameter was selected as $\lambda = 0.08$. This produced a cross validation error of $0.036$ and a true test error of $0.044$, both relatively small. The variables `salaries` had the largest relative influence of $83$ which was significantly larger than any of the other predictors. 
+
+```{r}
+table = read_csv("~/hospital-costs/lindsayknupp/final_files/boosting.csv")
+
+knitr::kable(table)
+```
+
+
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.932,0.982,0.0181,0.0680)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
+
+
+## Neural Network 
+To build our neural network, we included $4$ hidden layers and $1$ output layer. Within our hidden layers, we had $2$ dense units that used the ReLU activation function and $2$ dropout units that aimed to prevent overfitting. Our output layer used a softmax activation function in order to predict the appropriate class label. 
+
+### Assumptions 
+There are no model assumptions.
+
+### Results 
+After training our model for $10$ epochs, we got a cross validation error of $0.044$ and a true test error of $0.038$. Both comparable with our other qualitative prediction methods. 
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
+type = c("True positive", "True negative", "False positive", 
+         "False negative")
+
+values = c(0.915,0.993,0.007,0.085)
+
+rates = tibble("Classification Rates" = type, "Values" = values)
+
+rates %>%
+  kable(linesep = "") %>%
+  kable_styling()
+```
 
 
 # Simulation Study 
@@ -357,8 +426,11 @@ plot2 = ggplot(results) +
 
 
 grid.arrange(plot1,plot2,nrow=2)
+```
+Comparing the optimal k to the error rates, we can see that 
 
 
+```{r,warning=FALSE,message=FALSE,echo=FALSE}
 plot3 = ggplot(results) + 
   geom_histogram(aes(x=var),bins=15)
 

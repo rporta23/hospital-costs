@@ -1967,7 +1967,7 @@ cv_random_forest = 0.03680463
 
 ```{r}
 random_forest.costs <- randomForest(costs_bin ~ ., data = select(train,-fold),
-                                    mtry = sqrt(ncol(current_train_folds)-2),
+                                    mtry = sqrt(ncol(train)-2),
                                     importance = TRUE  )
 
 random_forest.pred = predict(random_forest.costs,test,type="class")
@@ -1989,6 +1989,8 @@ truepos_random_forest = model_info$truepos
 trueneg_random_forest = model_info$trueneg
 falsepos_random_forest = model_info$falsepos
 falseneg_random_forest = model_info$falseneg
+
+importance(random_forest.costs)
 
 ```
 
@@ -2070,6 +2072,18 @@ falsepos_boosting = model_info$falsepos
 falseneg_boosting = model_info$falseneg
 
 ```
+
+```{r, include = TRUE}
+table <- summary.gbm(boost.costs, plotit = FALSE) |> 
+  rename("Variables" = var,`Relative Influence` = rel.inf) 
+
+write_csv(table,file="boosting.csv")
+
+
+knitr::kable(table)
+```
+
+
 
 ## Neural Network
 
