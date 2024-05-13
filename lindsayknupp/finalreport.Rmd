@@ -1791,7 +1791,6 @@ plot2 = ggplot(results) +
   geom_point(aes(x=k,y=error)) + 
   ggtitle("Error rates vs optimal k")
 
-
 grid.arrange(plot1,plot2,nrow=2)
 ```
 After $200$, simulations, the chosen $k$ ranged from $[1,90]$, almost the entire range of $k$s that we tried. However, most of the data is concentrated in the range from $[1,25]$, which is consistent with our original results. We also found it interesting that in some simulations, a $k = 76$ could produce an error rate comparable to $k=1$. This suggests that our data does not have a strong impact on the choice of $k$. 
@@ -1801,28 +1800,47 @@ plot3 = ggplot(results) +
   geom_histogram(aes(x=var),bins=15) + 
   ggtitle("Distribution of Variances")
 
-plot4 = ggplot(results) +
-  geom_point(aes(x=i,y=var)) +
+# plot4 = ggplot(results) +
+#   geom_point(aes(x=i,y=var)) +
+#   ggtitle("Error variance across k") + 
+#   xlab("Simulation number")
+# 
+
+binned = results %>%
+  mutate("kbin" = 
+           case_when(k <= 15 ~ "1-15",
+                     k <= 30 ~ "15-30",
+                     k <= 50 ~ "30-50",
+                     k > 50 ~ ">50"))
+
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7",'#984ea3','#a65628','black' )
+
+plot4 = ggplot(binned) +
+  geom_point(aes(x=i,y=var,color=as.factor(kbin))) +
   ggtitle("Error variance across k") + 
-  xlab("Simulation number")
+  xlab("Simulation number") +
+  scale_color_manual(name = "k range",values = cbPalette)
+
 
 grid.arrange(plot3,plot4,nrow = 2)
 ```
 Because of the variability of our $k$, we then wondered if the best $k$ being chosen was close to other $k$ error rates, suggesting low variability of the error rates. However, there was no clear pattern emerging across the simulations. Some simulations had lower variance, all choices of $k$ produced similar error rates, and some simulations had higher variance, all choices of $k$ produced differing error rates. However, we must also note that with our scaled data, we are unfamiliar about what constitutes "small" or "large" quantities. 
 
 # Conclusions 
-Most Important Predictors: Salaries and Number of Employees
-However, each predictor is associated with the response
-Random Forest has lowest test MSEP, but test error is similar across all methods
+Overall, we found that salaries was one of the most important predictors across all our analyses. This is interesting as salaries is the only predictor which is a direct component of the total costs. This implies that a large part of the variability in hospital costs can be explained by salaries. This may suggest that salaries makeup a similar proportion of total costs across all the hospitals.
 
-We can see that salaries, inpatients, and the dummy variable for whether a hospital is specialized or not seem to play a major role overall in our prediction, since they’re selected in almost all the models by size. Conversely, total days and whether a hospital had duplicate records in our dataset did not seem to play a major role in our models.
+More specifically, within our quantitative analyses we found that salaries and number of employees was the most significant. Within our variable selection analyses we found that salaries, inpatients, and the dummy variable for specialized hospitals were the most significant as they were almost always selected. Within our qualitative analyses we found that salaries was the most significant. 
 
-Lasso selects 10 variables to be nonzero, dropping three in the process. This model size is somewhat close to the model size selected by our exhaustive and stepwise methods. The variables dropped are the duplicate dummy variable, the governmental dummy variable, and the number of beds.
+Further, we found it interesting that all methods had similar error rates ranging from simpler to more complex models. Although we found improvements in the methods including all the predictors, even the simple models including one predictor did not perform much worse than the full models. 
 
+In our simulation study, we discovered variability in our optimal choice of $k$ in the KNN method. It was surprising that the error rate was not influenced much by the choice of $k$ when trying $k \in [1,100]$. Most of the selected $k$s ranged from $[1,25]$ but some simulations yielded much higher values of $k$. 
 
+# Contributions 
+Lindsay Knupp - Dataset, Qualitative Analyses, Simulation Study
 
+Rose Porta - EDA, Quantitative Analyses
 
-We found that salaries greatly affects a hospital's total costs, which is intuitive. 
+Johhny Rasnic - Variable Selection, Bootstrap Standard Errors 
 
 
 
