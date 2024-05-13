@@ -13,7 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Dataset
 
-Our data was collected from [Centers for Medicare & Medicaid Services](https://data.cms.gov/provider-compliance/cost-report/hospital-provider-cost-report) on April 03, 2024. It features information about hospitals through annual cost reports in $2020$. It had $5712$ observations and we used $90\%$ of them as our training set and $10\%$ as our test set. We were interested in understanding how certain characteristics of hospitals like location, number of full time equivalent employees, or number of beds, for example, affected the hospitals' total operating costs. To perform qualitative analyses, we categorized each hospital as above or below the median. 
+Our data was collected from [Centers for Medicare & Medicaid Services](https://data.cms.gov/provider-compliance/cost-report/hospital-provider-cost-report) on April 03, 2024. It features information about hospitals through annual cost reports in $2020$. It had $5712$ observations; $90\%$ were used as our training set and $10\%$ were used as our test set. We were interested in understanding how certain characteristics of hospitals like location, number of full time equivalent employees, or number of beds, for example, affected the hospitals' total operating costs. To perform qualitative analyses, we categorized each hospital as above or below the median total costs.  
 
 While the data is roughly annual, certain hospitals reported for different fiscal year lengths. To normalize, we divided some of our variables by the length of their cost reporting period to obtain daily estimates like average number of inpatients per day or average salary expense per day. Variables that are reported as "averages per day" are denoted with the word "average" in the predictor table below. Some hospitals were listed multiple times with distinct reporting periods. We learned that this could correspond to a change in control of the hospital. For example, the hospital could have been sold and transitioned from a voluntary to a governmental hospital. Duplicate hospitals were left in the dataset and a dummy variable, `duplicate` was added to indicate its status.  
 
@@ -35,11 +35,11 @@ Variables = c("Number of Beds","FTE employees on payroll","Total hospital days",
                    "Rural versus Urban","Type of control","Type of provider","Duplicate hospital","Total costs","Costs bin")
 
 
-Range = c("[1-2,791]","[0.05-26,941.09]",
-          "[1-772,819]","[0.0027-462.63]","[-$6,129,919, $11,516,626]",
-           "[-$636,856,458, $29,465,487,958] ","[$128.51, $9,032,294.85]","[0.0033-2123.13]",
-           "[2487 rural, 3225 urban]","[2927 voluntary, 1728 proprietary, 1057 governmental]",
-           "[4779 general, 993 specialized]","[132 duplicates, 5580 non duplicates ]","[$2,718.28, $16,000,980.58]","[2856 above median, 2856 below median]")
+Range = c("[1:2,791]","[0.05:26,941.09]",
+          "[1:772,819]","[0.0027:462.63]","[-$6,129,919: $11,516,626]",
+           "[-$636,856,458:$29,465,487,958] ","[$128.51: $9,032,294.85]","[0.0033:2123.13]",
+           "[2487 rural:3225 urban]","[2927 voluntary:1728 proprietary:1057 governmental]",
+           "[4779 general:993 specialized]","[132 duplicates: 5580 non duplicates]","[$2,718.28:$16,000,980.58]","[2856 above median:2856 below median]")
 
 Descriptions = c("Total number of available beds including adult beds, pediatric beds, birthing room, and newborn ICU beds",
                  "Average number of full time-equivalent employees",
@@ -203,7 +203,7 @@ df_test <- hpc_scaled |>
 
 In order to get a visual sense of the relationships in the data, we created a few exploratory plots.
 
-The plot below displays the distribution of (scaled) total costs, where the red line represents the median and the blue line represents the mean. We can see that the distribution of total costs is very right-skewed. For this reason, we chose to define our binary response based on whether or not total costs was above the median, not the mean.
+The following plot displays the distribution of (scaled) total costs, where the red line represents the median and the blue line represents the mean. We can see that the distribution of total costs is very right-skewed. For this reason, we chose to define our binary response based on whether or not total costs was above the median, not the mean.
 
 ```{r, include = TRUE}
 ggplot(hpc_scaled, aes(x = total_costs)) +
@@ -212,7 +212,7 @@ ggplot(hpc_scaled, aes(x = total_costs)) +
   geom_vline(xintercept = mean(hpc_scaled$total_costs), color = "blue")
 ```
 
-The pairs plots below visualize the relationships between all variables in the data (using the scaled data). We separated the data into two pairs plots, one including only numeric predictors and one including only categorical predictors, in order to see the relationships more clearly.
+The pairs plots below visualize the relationships between all variables in the (scaled) data. We separated the data into two pairs plots, one including only numeric predictors and one including only categorical predictors, in order to see the relationships more clearly.
   
 
 ```{r, include = TRUE}
@@ -226,7 +226,7 @@ quant_plot <- hpc_scaled |>
 pairs(quant_plot)
 ```
 
-In the plot above visualizing the relationships between all numeric predictors and the response, we find that total costs appears to have fairly strong positive linear relationships with the following predictors: employees on payroll, total days, bed days, total discharges, and salaries. Total costs appears to have weak or no relationship with total income and total assets. For the binary response, the predictors which have positive relationships with total cost have a pattern such that binary costs = 0 corresponds to a higher concentration of points with low values of the predictor, and binary costs = 1 corresponds to a wider range of values for the predictor. This same pattern shows up also for total assets and total income, which did not look associated with continuous total cost.
+In the above plot visualizing the relationships between all numeric predictors and the response, we find that total costs appears to have fairly strong positive linear relationships with the following predictors: employees on payroll, total days, bed days, total discharges, and salaries. Total costs appears to have weak or no relationship with total income and total assets. For the binary response, the predictors which have positive relationships with total cost have a pattern such that binary costs = 0 corresponds to a higher concentration of points with low values of the predictor, and binary costs = 1 corresponds to a wider range of values for the predictor. This same pattern also shows up for total assets and total income, which did not look associated with the continuous total cost.
 
 Further, we find very high pairwise positive collinearity between (1) total days, bed days, and total discharges, and (2) salaries and employees on payroll.
 
@@ -242,9 +242,9 @@ qual_plot <- hpc_scaled |>
 pairs(qual_plot)
 ```
 
-Looking at the categorical predictors above, it is less obvious to see relationships between the predictors and response, but there does appear to be some relationship between duplicate and total costs as well as between proprietary control and total costs. For each of these relationships, it seems that when the predictor value equals zero, the total costs are low, while when the predictor value equals one, there is more. of a range of total costs values. However, it is hard to tell if this is a true relationship or if it simply results from unequal numbers of observations in each predictor category. Most total costs values are small, so if there are a smaller number of data points in one category, it would be likely that most of those have small total costs values, while if there are more points in a category, it would look like a wider range.
+Looking at the categorical predictors above, it is less obvious to see relationships between the predictors and response. But, there does appear to be some relationship between duplicate and total costs as well as between proprietary control and total costs. For each of these relationships, it seems that when the predictor value equals zero, the total costs are low, while when the predictor value equals one, there is more of a range of total costs values. However, it is hard to tell if this is a true relationship or if it simply results from an unequal number of observations in each predictor category. Most total costs values are small, so if there are a smaller number of data points in one category, it is likely that most of those have small total costs values. While if there are more points in a category, it would look like a wider range.
 
-Focusing on the plot of total costs against binary cost (the two response variables), we notice that all total costs values below the median are very small, while those above the median have a much wider range of values. This reflects the skewness of total costs visualized above. 
+Focusing on the plot of total costs against binary cost (the two response variables), we notice that all total costs values below the median are very small, while those above the median have a much wider range of values. This reflects the skewness of total costs visualized previously. 
 
 # Quantitative Outcome Analyses
 
@@ -292,11 +292,11 @@ Linear Regression analysis has four key assumptions:
 
 3. Constant Variance
 
-4. Errors are normally distributed
+4. Errors are Normally distributed
 
-In order to assess these assumptions, we created pairwise scatterplots between the response (total costs) and each predictor. We see from the scatterplots that the relationship between the response and each numeric predictor appears approximately linear, and there are no obvious violations of non-constant variance. A histogram of total costs shows that the response variable is notably right-skewed, indicating possible concern that the errors may be non-normal. However, the linear relationships between each predictor and the response indicate that linear regression is a suitable model. We tried log-transforming total costs to better meet the normality of errors assumption, but we found that this transformation made the relationships between each predictor and the response notably non-linear, indicating that this transformation is not useful to improve the fit of the data to the model assumptions. 
+In order to assess these assumptions, we created pairwise scatterplots between the response (total costs) and each predictor. We see from the scatterplots that the relationship between the response and each numeric predictor appears approximately linear and there are no obvious violations of non-constant variance. A histogram of total costs shows that the response variable is notably right-skewed, indicating a possible concern that the errors may be non-normal. However, the linear relationships between each predictor and the response indicate that linear regression is a suitable model. We tried log-transforming total costs to better meet the normality of errors assumption, but we found that this transformation made the relationships between each predictor and the response notably non-linear, indicating that this transformation is not useful to improve the fit of the data to the model assumptions. 
 
-For independence of errors, it is relatively reasonable to assume that the total costs of one hospital would not impact those of another hospital, so this assumption is reasonably met. There could be small violations if, for example, two hospitals are in close proximity and one has more capacity than the other. In this scenario the one with lower capacity may redirect patients to the higer capacity one, making the costs decrease for the smaller one and increase for the larger one. 
+For independence of errors, it is relatively reasonable to assume that the total costs of one hospital would not impact those of another hospital, so this assumption is safely met. There could be small violations if, for example, two hospitals are in close proximity and one has more capacity than the other. In this scenario the one with lower capacity may redirect patients to the higer capacity one, making the costs decrease for the smaller one and increase for the larger one. 
 
 ```{r}
 # model summaries
@@ -425,7 +425,7 @@ jtools::summ(mod_mlr)
 
 The adjusted $R^2$ value of 0.94 indicates that 94 percent of the variability in total costs can be explained by the predictors. This $R^2$ value is quite high. The estimate of the test MSEP using CV is 0.071, and the test MSEP based on the held-out set is 0.106. These error rates are lower than any of the individual marginal linear regression error rates, indicating that when we include all predictors in one model, we can predict total costs more accurately than if we only include one predictor. 
 
-Looking at the coefficient estimates and p-values in the table below, we see that most predictors still have very small p-values, but some which were significant in the marginal linear regressions become insignificant in the multiple linear regression. Specifically, total days, number of beds, and total discharges have large p-values in the multiple regression when all three had very small p-values in the marginal models. This indicates that there is likely correlations between the predictors such that once we have already accounted for some of them, others do not add much further information. This is consistent with the pairs plot which shows strong linear relationships between several pairs of predictors. 
+Looking at the coefficient estimates and p-values in the table below, we see that most predictors still have very small p-values, but some which were significant in the marginal linear regressions become insignificant in the multiple linear regression. Specifically, total days, number of beds, and total discharges have large p-values in the multiple regression when all three had very small p-values in the marginal models. This indicates that there is likely correlations between the predictors such that once we have already accounted for some of them, others do not add much more information. This is consistent with the pairs plot which shows strong linear relationships between several pairs of predictors. 
 
 
 ## Multiple linear regression with interactions and transformations: 
@@ -480,9 +480,7 @@ For the regression tree, the only assumption we are making is that the response 
 
 ### Results
 
-A plot of the pruned regression tree is displayed below. The optimal pruning size was found to be 9 via cross validation. We see that almost all splits in the tree are made based on the salaries predictor, indicating that salaries is the most important predictor. There are only two other predictors included in the tree, which are number of employees and total income. The estimate of the test MSEP using CV is 0.144, and the test MSEP based on the held-out set is 0.100. These error values are very similar to those for the multiple linear regression models.
-*The decision tree is shown underneath the coefficient table on page 10.
-
+A plot of the pruned regression tree is displayed below (underneath the coefficient table). The optimal pruning size was found to be 9 via cross validation. We see that almost all splits in the tree are made based on the salaries predictor, indicating that salaries is the most important predictor. There are only two other predictors included in the tree: number of employees and total income. The estimate of the test MSEP using CV is 0.144, and the test MSEP based on the held-out set is 0.100. These error values are very similar to those for the multiple linear regression models.
 
 ```{r}
 formula <- as.formula("total_costs ~ .")
@@ -985,7 +983,7 @@ df_test = hpc_scaled |> filter(set == "Test") |> select(-c(set, fold))
 ## Best Subset
 
 ### Results
-In the plots below, we can see what variables are selected depending on what criterion we wish to use ($R^2$, adjusted $R^2$,etc.) for the full dataset. Each black box signifies that that variable was chosen. For the last plot, we run 10-fold CV to find the best model size to minimize the test MSE averaged across the folds. As we can see, we gain a significant reduction in the MSE from adding a non-intercept term. However, after that, the gains from additional variables in the model are comparatively quite small. Based on the 10-fold CV, we choose a model with 8 variables. We obtained a cross validation MSEP of $0.0613$ and a test MSEP of $0.105$. 
+In the following plots, we can see which variables are selected depending on which criterion we wish to use ($R^2$, adjusted $R^2$,etc.) for the full dataset. Each black box signifies that that variable was chosen. For the last plot, we run 10-fold CV to find the best model size that minimizes the test MSE averaged across the folds. As we can see, we gain a significant reduction in the MSE from adding a non-intercept term. However, after that, the gains from additional variables in the model are comparatively quite small. Based on the 10-fold CV, we choose a model with 8 variables. We obtained a cross validation MSEP of $0.0613$ and a test MSEP of $0.105$. 
 
 ```{r, echo=FALSE,fig.height=4.4}
 library(leaps)
@@ -1513,7 +1511,7 @@ rates %>%
 We assume that our response is Bernoulli. 
 
 ### Results 
-We decided to transform `total_income`,`fte_employees_on_payroll`, `salaries`, and `total_days` to experiment with how less significant predictors in conjunction with `salaries` affected the response. We computed polynomial models up to degree $2$ for `total_days` and interaction terms between `total_income` & `fte_employees_on_payroll` and between `fte_employees_on_payroll` & `salaries`.
+We decided to transform `total_income`, `fte_employees_on_payroll`, `salaries`, and `total_days` to experiment with how less significant predictors in conjunction with `salaries` affected the response. We computed polynomial models up to degree $2$ for `total_days` and interaction terms between `total_income` & `fte_employees_on_payroll` and between `fte_employees_on_payroll` & `salaries`.
 
 With our smaller model, all of our new predictors were statistically significant with extreme $z$ statistics. However, it is important to note that the standard errors associated with each coefficient were extremely high suggesting a poor fit. 
 
@@ -1548,7 +1546,7 @@ rates %>%
 We assume that our predictors are drawn from a multivariate normal distribution and both classes share a common covariance matrix. 
 
 ### Results
-As stated in the introduction, LDA performed the worst with a cross validation error rate of $0.175$ and a true error rate of $0.165$. This may suggest that our original assumption of our predictors being sampled from a multivariate normal was incorrect or that our classes do not share a common covariance matrix. Further, it is clear that a linear decision boundary is not sufficient to classify hospitals' total costs. 
+As stated in the introduction, LDA performed the worst with a cross validation error rate of $0.175$ and a true error rate of $0.165$. This may suggest that our original assumption of our predictors being sampled from a multivariate normal was incorrect or that our classes do not share a common covariance matrix. It is clear that a linear decision boundary is not sufficient to classify hospitals' total costs. 
 
 ```{r,warning=FALSE,message=FALSE,echo=FALSE}
 type = c("True positive", "True negative", "False positive", 
@@ -1659,7 +1657,7 @@ rates %>%
 We again make no assumptions on the structure of the data. 
 
 ### Results 
-Bagging reduced our cross-validation error to $0.038$ compared to the decision tree, a factor of about $1.3$. Looking at the importance plot, `salaries` is the most importance variable. If it were to be removed from the tree, an average of $161$ hospitals would be misclassified, given by the mean decrease in accuracy. Further, it's mean decrease of the Gini index is $2234.21$.
+Bagging reduced our cross-validation error to $0.038$ compared to the decision tree, a factor of about $1.3$. Looking at the importance plot, `salaries` is the most important variable. If it were to be removed from the tree, an average of $161$ hospitals would be misclassified, given by the mean decrease in accuracy. Further, its mean decrease of the Gini index is $2234.21$.
 
 ```{r,warning=FALSE,message=FALSE,echo=FALSE}
 plot(imager::load.image("~/hospital-costs/lindsayknupp/final_files/bagging_tree_imp.png"), axes = FALSE)
@@ -1686,7 +1684,7 @@ rates %>%
 We again make no assumptions on the structure of the data. 
 
 ### Results 
-Random Forest produced a cross validation error of $0.037$ and a true test error $0.0298$. The most important variable is `salaries` with a mean decrease in accuracy of $71.61$ and a mean decrease of the Gini index is $886.61$. 
+Random Forest produces similar results to Bagging with a cross validation error of $0.037$ and a true test error $0.0298$. The most important variable is `salaries` with a mean decrease in accuracy of $71.61$ and a mean decrease of the Gini index is $886.61$. We also notice that in the Mean Decrease in Accuracy plot, the ordering of the relative importance of the first $4$ variables is the same as in Bagging. After that, the variable importance ordering between the two methods switches around. 
 
 ```{r,warning=FALSE,message=FALSE,echo=FALSE}
 plot(imager::load.image("~/hospital-costs/lindsayknupp/final_files/random_forest_imp.png"), axes = FALSE)
@@ -1772,9 +1770,9 @@ knitr::kable(summary)
 
 # Simulation Study 
 
-We were interested in understanding how our data affected the optimal choice of $k$ in the $k$ -nearest neighbors algorithm. We already experienced some variability when running our model through on different computers. Therefore, we wanted to see if more simulated datasets would produce the same variablility. 
+We were interested in understanding how our data affected the optimal choice of $k$ in the $k$ -nearest neighbors algorithm. We already experienced some variability when running our model on different computers. Therefore, we wanted to see if more simulated datasets would produce the same variablility. 
 
-We generated our continuous predictors by sampling from a multivariate normal distribution. We generated our categorical predictors by sampling from a binomial distribution with our known class probabilities. We generated our "true" continuous response with our multiple linear regression model (trained on the true dataset). Normal random noise $N \sim (0,0.25)$ was added to these predictions to generate our final continuous response. Lastly, we classified each observation as above/below the `total_costs` median to generate our class labels. We tried $k\in [1,100]$ in each simulation and picked the best based on the error rate. 
+We generated our continuous predictors by sampling from a multivariate normal distribution. We generated our categorical predictors by sampling from a binomial distribution with our known class probabilities. We generated our "true" continuous response with our multiple linear regression model (trained on the original dataset). Normal random noise $N \sim (0,0.25)$ was added to these predictions to generate our final continuous response. Lastly, we classified each observation as above/below the median total costs to generate our class labels. We tried $k\in [1,100]$ in each simulation and picked the best based on the error rate. 
 
 ```{r,warning=FALSE,message=FALSE,echo=FALSE}
 library(ggplot2)
