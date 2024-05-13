@@ -1840,7 +1840,7 @@ Lindsay Knupp - Dataset, Qualitative Analyses, Simulation Study
 
 Rose Porta - EDA, Quantitative Analyses
 
-Johhny Rasnic - Variable Selection, Bootstrap Standard Errors 
+Johnny Rasnic - Variable Selection, Bootstrap Standard Errors 
 
 
 
