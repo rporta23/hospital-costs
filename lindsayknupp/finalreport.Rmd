@@ -467,7 +467,7 @@ a = jtools::summ(mod_mlr)
 jtools::summ(mod_mlr)
 ```
 
-The adjusted $R^2$ value of 0.94 indicates that this model with transformations and interactions explains about the same proportion of variablity in total costs as the main effects model. One interesting finding, however, is that the p-value for the quadratic term for total days has a significant p-value despite the main-effect for total days not being significant.
+The adjusted $R^2$ value of 0.94 indicates that this model with transformations and interactions explains about the same proportion of variablity in total costs as the main effects model. One interesting finding, however, is that the p-value for the quadratic term for total days is significant despite the p-value for the main-effect for total days not being significant.
 
 The estimate of the test MSEP using CV is 0.114, and the test MSEP based on the held-out set is 0.081. These error values are very similar to those for the main effects model.
 
@@ -1043,7 +1043,7 @@ knitr::kable(data.frame(coeffs))
 ## Forward Stepwise
 
 ### Results
-We see near identical results between the exhaustive best subsets selection and the forward/backward stepwise methods. We obtained a cross validation MSEP of $0.0613$ and a test MSEP of $0.105$.
+We see near identical results between the exhaustive best subsets selection and the forward/backward stepwise methods. We obtained a cross validation MSEP of $0.0613$ and a test MSEP of $0.105$. Salaries, the number of inpatients, and provider type were almost always selected signifying their importance. 
 
 ```{r echo=FALSE,fig.height=4.4}
 library(leaps)
@@ -1317,7 +1317,7 @@ knitr::kable(as.data.frame(est1,row.names = rownames))
 We use the continuous `total_costs` variable as our response. 
 
 ### Results 
-We obtained a cross validation MSEP of $0.0845$ and a test MSEP of $0.094$. 
+PCR selected $13$ components corresponding to all $12$ of our predictors with our dummy variables. This signifies that none of the predictors could be dropped and we were unable to reduce the dimensionality of our dataset. We obtained a cross validation MSEP of $0.0845$ and a test MSEP of $0.094$. 
 
 ```{r echo=FALSE}
 library(pls)
@@ -1355,16 +1355,15 @@ The following shows a comparison of the MSEPs across all the variable selection 
 
 method <- c("Best Subset","Forward Stepwise","Backward Stepwise","Ridge (Quant.)","Ridge (Qual)","Lasso (Quant)","Lasso (Qual)","PCR")
 
-cv_error <- c(0.0613,0.0613,0.0613,NA,NA,NA,NA,0.0845)
+cv_error <- c(0.0613,0.0613,0.0613,0.071,NA,0.071,NA,0.0845)
 
-test_error <- c(0.105,0.105,0.105,0.066,0.182,0.911,0.182,0.094)
+test_error <- c(0.105,0.105,0.105,0.071,0.182,0.074,0.182,0.094)
 
 error_summary <- tibble(method,cv_error,test_error)
 
 knitr::kable(error_summary)
 
 ```
-
 
 
 # Bootstrap SEs
